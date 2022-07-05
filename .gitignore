@@ -1,0 +1,12 @@
+.vscode
+*.sw*
+.history
+.metals
+.idea
+*.log
+*.env
+!tests.env
+target
+.bloop
+out
+.bsp
