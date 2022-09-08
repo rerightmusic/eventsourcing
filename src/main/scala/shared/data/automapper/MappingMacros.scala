@@ -4,6 +4,8 @@ import shared.macros.all.*
 import scala.quoted._
 import scala.util.control.NonFatal
 import izumi.reflect.macrortti.LightTypeTagRef.SymName.SymTypeName
+import cats.data.NonEmptySet
+import cats.Order
 
 def materializeNonDynamicMapping[S, T](
   source: Expr[S]
@@ -205,7 +207,7 @@ def materializeMapping[S, T](using quotes: Quotes)(
                 targetFieldTypeRepr.asType match {
                   case _
                       if targetTypeRepr.typeSymbol
-                        .memberField(targetField.name)
+                        .fieldMember(targetField.name)
                         .flags
                         .is(Flags.HasDefault) =>
                     None
@@ -221,7 +223,7 @@ def materializeMapping[S, T](using quotes: Quotes)(
                           Select(
                             targetFieldTypeRepr.ident,
                             targetFieldTypeRepr.typeSymbol
-                              .memberMethod("empty")
+                              .methodMember("empty")
                               .head
                           ),
                           List(TypeTree.of[t])

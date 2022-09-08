@@ -16,7 +16,7 @@ lazy val root = project
     ),
     publish / skip := true,
     Global / onChangedBuildSource := ReloadOnSourceChanges,
-    scalaVersion := "3.1.1",
+    scalaVersion := "3.2.0",
     scalacOptions ++= Seq(
       "-Ykind-projector:underscores",
       "-Xfatal-warnings",

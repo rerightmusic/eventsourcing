@@ -1,6 +1,6 @@
 package eventsourcing
 
-object all:
+object all extends infra.JsonInstances:
   export domain.types.*
   export domain.update.types.*
   export domain.Aggregate

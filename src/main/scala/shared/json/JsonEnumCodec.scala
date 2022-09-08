@@ -2,7 +2,6 @@ package shared.json
 
 import shared.newtypes.NewtypeWrapped
 import cats.data.NonEmptyList
-import eventsourcing.all.*
 import zio.json.*
 import zio.json.internal.RetractReader
 import zio.NonEmptyChunk

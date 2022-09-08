@@ -7,7 +7,7 @@ import eventsourcing.domain.AggregateView
 import shared.json.all.{*, given}
 import cats.data.NonEmptyList
 import doobie.util.update.Update
-import doobie.free.connection.pure
+import doobie.free.connection.{raiseError, pure}
 import zio.Task
 import doobie.*
 import doobie.implicits.*
@@ -75,7 +75,7 @@ trait PostgresSchemalessAggregateViewStore:
     fromData: (
       ev: PostgresDocument[unId.Wrapped, Meta, Data]
     ) => Either[Throwable, DomData],
-    toData: (ev: DomData) => Data,
+    toData: (ev: DomData) => Either[Throwable, Data],
     readState: (
       b: ReadState[unId.Wrapped, Meta, Data, unQId.Wrapped, DomMeta, DomData]
     ) => Option[NonEmptyList[unQId.Wrapped]] => ConnectionIO[
@@ -141,22 +141,26 @@ trait PostgresSchemalessAggregateViewStore:
           def persistAggregateViewM(
             view: Map[Id, D.Schemaless[Id, DomMeta, DomData]]
           ) = view.values.toList.toNel.fold(pure(()))(view_ =>
-            upsertInto(
-              tableName,
-              view_
-                .map(v =>
-                  PostgresDocument(
+            for
+              ups <- view_
+                .traverse(v =>
+                  for
+                    data <- toData(v.data) match
+                      case Left(e)  => raiseError(e)
+                      case Right(r) => pure(r)
+                  yield PostgresDocument(
                     id = v.id,
                     meta = toMeta(v.meta),
                     createdBy = v.createdBy,
                     lastUpdatedBy = v.lastUpdatedBy,
-                    data = toData(v.data),
+                    data = data,
                     deleted = v.deleted,
                     created = v.created,
                     lastUpdated = v.lastUpdated
                   )
                 )
-            ).map(_ => ())
+              _ <- upsertInto(tableName, ups)
+            yield ()
           )
 
           def toSchemaless(v: PostgresDocument[Id, Meta, Data]) = for
@@ -238,6 +242,7 @@ trait PostgresSchemalessAggregateViewStore:
               .map(getFieldAndValue)
               .toList
               .groupBy(_._1)
+              .view
               .mapValues(_.map(_._2))
               .toList
               .foldLeft[FilterPredicate](Filter._false)((prev, next) =>

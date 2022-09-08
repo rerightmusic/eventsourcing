@@ -24,7 +24,7 @@ object PostgresAccountDetailsService:
     x => x.auto.to[D.AccountMeta],
     x => x.auto.to[AccountMeta],
     x => Right(x.data.auto.to[D.AccountDetails]),
-    x => x.auto.to[AccountDetailsData],
+    x => Right(x.auto.to[AccountDetailsData]),
     s => s.defaultReadState,
     i => Some(i) *: EmptyTuple,
     "test",

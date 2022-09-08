@@ -259,7 +259,7 @@ object operations:
           .map(_ => None)
 
     from = status.map(_.next)
-    evsProcessed <- (store.get
+    _ <- (store.get
       .streamEventsFrom(None, from)
       .map(AggregateViewStage.CatchUp -> _)
       ++ (if subscribe then store.get.subscribeEventStream
@@ -384,7 +384,7 @@ object operations:
         )
       )
       .compile
-      .toList
+      .drain
   yield ()
 
   def getAggregateView[View, Query, Aggregates <: NonEmptyTuple](using

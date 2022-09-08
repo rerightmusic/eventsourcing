@@ -43,7 +43,7 @@ def runSync[E <: Throwable, A](
           te <- ZIO.access[Blocking](_.get.blockingExecutor.asEC)
           envFile = Properties
             .envOrNone("TESTS_ENV_FILE")
-            .getOrElse(s"${System.getProperty("user.dir")}/tests.env")
+            .getOrElse(s"${System.getProperty("user.dir")}/../tests.env")
           envVars <- Conf.getEnvVars(List(new File(envFile)))
           pgConfig <- PostgresConfig.fromEnv["Accounts"](envVars)
           layer =
@@ -91,7 +91,10 @@ def logAndThrow = (e: Throwable) =>
   println(e)
   throw e
 
-def zassert(a: => Assertion): Task[Unit] = ZIO.effect(a)
+// Creating a function and then calling it here is necessary otherwise the following exception occurs
+// java.lang.ClassCastException: class org.scalatest.Succeeded$ cannot be cast to class scala.runtime.BoxedUnit
+// (org.scalatest.Succeeded$ and scala.runtime.BoxedUnit are in unnamed module of loader 'app')
+def zassert(a: => Assertion): Task[Unit] = ZIO.effect(() => a).map(_())
 
 case class FiberState(ref: Ref[List[Fiber.Runtime[Any, Any]]])
 def fork[E, A](

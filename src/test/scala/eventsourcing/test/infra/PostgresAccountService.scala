@@ -39,17 +39,17 @@ object PostgresAccountService:
             case a: AccountEvent.AccountEmailUpdated =>
               a.auto.to[D.AccountEmailUpdated]
           ),
-        _.auto.to[AccountData],
+        x => Right(x.auto.to[AccountData]),
         _.auto.to[AccountMeta],
         x =>
-          x match
+          Right(x match
             case a: D.AccountCreated =>
               a.auto.to[AccountEvent.AccountCreated]
             case a: D.AccountPasswordUpdated =>
               a.auto.to[AccountEvent.AccountPasswordUpdated]
             case a: D.AccountEmailUpdated =>
               a.auto.to[AccountEvent.AccountEmailUpdated]
-        ,
+          ),
         "test",
         1.minutes
       )

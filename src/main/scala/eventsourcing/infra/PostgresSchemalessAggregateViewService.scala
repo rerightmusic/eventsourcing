@@ -59,7 +59,7 @@ trait PostgresSchemalessAggregateViewService:
     fromData: (
       ev: PostgresDocument[unId.Wrapped, Meta, Data]
     ) => Either[Throwable, DomData],
-    toData: (ev: DomData) => Data,
+    toData: (ev: DomData) => Either[Throwable, Data],
     readState: (
       b: PostgresAggregateViewStore.ReadState[
         unId.Wrapped,

@@ -191,7 +191,8 @@ object types:
             agg.Meta,
             agg.EventData
           ] => Res1
-        ) *: Fs,
+        )
+          *: Fs,
         Res
       ] =
         new FnsApply[
@@ -202,7 +203,8 @@ object types:
               agg.Meta,
               agg.EventData
             ] => Res1
-          ) *: Fs,
+          )
+            *: Fs,
           Res
         ]:
           def apply(
@@ -212,10 +214,12 @@ object types:
                 agg.Meta,
                 agg.EventData
               ] => Res1
-            ) *: Fs,
+            )
+              *: Fs,
             ev: AggregateViewEvent[Agg *: Xs]
           ): Res = if ev.name === agg.storeName then
-            fns.head(
+            val fns_ = fns.head
+            fns_(
               ev.event.asInstanceOf[Event[agg.Id, agg.Meta, agg.EventData]]
             )
           else f.apply(fns.tail, ev.copy())
@@ -231,7 +235,8 @@ object types:
     error: Option[String] = None
   ):
     def next = copy(
-      sequenceIds = sequenceIds.mapValues(x => SequenceId(x.value + 1)).toMap
+      sequenceIds =
+        sequenceIds.view.mapValues(x => SequenceId(x.value + 1)).toMap
     )
     def getSequenceId(name: String): SequenceId = sequenceIds
       .get(name)

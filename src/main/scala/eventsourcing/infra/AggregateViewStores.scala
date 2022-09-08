@@ -84,9 +84,18 @@ object AggregateViewStores:
         .accessM[AggregateStore[Id, Meta, EventData]](_.get.getLastSequenceId)
         .map(seqId => Map(t.storeName -> seqId))
 
-  given aggs2[Agg, Id, Meta, EventData, X, Xs <: Tuple](using
+  given aggs2[
+    Agg,
+    Id,
+    Meta,
+    EventData,
+    X,
+    Xs <: Tuple,
+    Stores_,
+    AggsId_ <: Tuple
+  ](using
     t: Aggregate.Aux[Agg, Id, Meta, EventData, ?],
-    n: AggregateViewStores[X *: Xs],
+    n: AggregateViewStores.Aux[X *: Xs, Stores_, AggsId_],
     tId: Tag[Id],
     tMeta: Tag[Meta],
     tEv: Tag[EventData],
@@ -95,47 +104,54 @@ object AggregateViewStores:
     Id,
     Meta,
     EventData
-  ] & n.Stores, Option[Id] *: n.AggsId] =
+  ] & Stores_, Option[Id] *: AggsId_] =
     new AggregateViewStores[Agg *: X *: Xs]:
-      type Stores = AggregateStore[Id, Meta, EventData] & n.Stores
-      type AggsId = Option[Id] *: n.AggsId
+      type Stores = AggregateStore[Id, Meta, EventData] & Stores_
+      type AggsId = Option[Id] *: AggsId_
 
       def streamEventsFrom(
         queries: Option[NonEmptyList[AggsId]],
         status: Option[AggregateViewStatus]
-      ): Stream[RIO[Stores, *], fs2.Chunk[AggregateViewEvent[Agg *: X *: Xs]]] =
-        (Stream
+      ): Stream[RIO[Stores, *], fs2.Chunk[AggregateViewEvent[
+        Agg *: X *: Xs
+      ]]] =
+        Stream
           .eval(
-            ZIO
-              .access[AggregateStore[Id, Meta, EventData]](svc =>
-                val seqId = status
-                  .map(_.getSequenceId(t.storeName))
-                  .getOrElse(SequenceId(0))
-                queries.flatMap(_.toList.flatMap(_.head.toList).toNel) match
-                  case None =>
-                    svc.get
-                      .streamEventsFrom(Some(seqId), None)
-                  case Some(qAggsIds) =>
-                    svc.get
-                      .streamEventsForIdsFrom(Some(seqId), None, qAggsIds)
-              )
-              .map(
-                _.map(
-                  _.map(ev =>
-                    AggregateViewEvent[Agg *: X *: Xs](
-                      t.storeName,
-                      ev.asInstanceOf[Event[Any, Any, Any]]
-                    )
-                  )
+            ZIO.access[AggregateStore[Id, Meta, EventData]](svc =>
+              val seqId = status
+                .map(_.getSequenceId(t.storeName))
+                .getOrElse(SequenceId(0))
+              queries.flatMap(_.toList.flatMap { x =>
+                val o: Option[Id] = x.head
+                o.toList
+              }.toNel) match
+                case None =>
+                  svc.get
+                    .streamEventsFrom(Some(seqId), None)
+                case Some(qAggsIds) =>
+                  svc.get
+                    .streamEventsForIdsFrom(Some(seqId), None, qAggsIds)
+            )
+          )
+          .map(
+            _.map(
+              _.map(ev =>
+                AggregateViewEvent[Agg *: X *: Xs](
+                  t.storeName,
+                  ev.asInstanceOf[Event[Any, Any, Any]]
                 )
               )
+            )
           )
           .flatten ++ n
           .streamEventsFrom(queries.map(_.map(_.tail)), status)
-          .map(_.asInstanceOf[fs2.Chunk[AggregateViewEvent[Agg *: X *: Xs]]]))
+          .map(_.asInstanceOf[fs2.Chunk[AggregateViewEvent[Agg *: X *: Xs]]])
 
-      def getLastSequenceIds = for
-        seqId <- ZIO
-          .accessM[AggregateStore[Id, Meta, EventData]](_.get.getLastSequenceId)
-        seqIds <- n.getLastSequenceIds
-      yield Map(t.storeName -> seqId) ++ seqIds
+      def getLastSequenceIds =
+        for
+          seqId <- ZIO
+            .accessM[AggregateStore[Id, Meta, EventData]](
+              _.get.getLastSequenceId
+            )
+          seqIds <- n.getLastSequenceIds
+        yield Map(t.storeName -> seqId) ++ seqIds

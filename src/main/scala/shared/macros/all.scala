@@ -4,10 +4,9 @@ import scala.quoted._
 import java.util.UUID
 
 object all:
-
   trait IsNewtype[A]
   object IsNewtype:
-    inline given isNewtype[E]: IsNewtype[E] = ${
+    transparent inline given isNewtype[E]: IsNewtype[E] = ${
       isNewtypeImpl[E]
     }
 
@@ -19,7 +18,7 @@ object all:
 
   trait IsEnum[A]
   object IsEnum:
-    inline given isEnum[E]: IsEnum[E] = ${
+    transparent inline given isEnum[E]: IsEnum[E] = ${
       isEnumImpl[E]
     }
 
@@ -34,7 +33,8 @@ object all:
 
   trait IsProductOrSumOfProducts[A]
   object IsProductOrSumOfProducts:
-    inline given isProductOrSumOfProducts[E]: IsProductOrSumOfProducts[E] = ${
+    transparent inline given isProductOrSumOfProducts[E]
+      : IsProductOrSumOfProducts[E] = ${
       isProductOrSumOfProductsImpl[E]
     }
 

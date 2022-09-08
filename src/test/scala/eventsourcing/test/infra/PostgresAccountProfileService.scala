@@ -26,7 +26,7 @@ object PostgresAccountProfileService:
     x => x,
     x => x,
     x => Right(x.data.auto.to[D.AccountProfile]),
-    x => x.auto.to[AccountProfileData],
+    x => Right(x.auto.to[AccountProfileData]),
     s =>
       s.readFromData(x =>
         x.value match {

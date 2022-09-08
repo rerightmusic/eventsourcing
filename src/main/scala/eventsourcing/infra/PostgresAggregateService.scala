@@ -35,9 +35,9 @@ object PostgresAggregateService:
       id: Id,
       ev: EventData
     ) => Either[Throwable, DomEventData],
-    toAgg: (ev: DomAgg) => Agg,
+    toAgg: (ev: DomAgg) => Either[Throwable, Agg],
     toMeta: (meta: DomMeta) => Meta,
-    toEventData: (ev: DomEventData) => EventData,
+    toEventData: (ev: DomEventData) => Either[Throwable, EventData],
     schema: String,
     catchUpTimeout: Duration
   )(using

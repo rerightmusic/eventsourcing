@@ -40,6 +40,7 @@ import shared.health.Unhealthy
 import cats.free.Free
 import scala.concurrent.duration.*
 import zio.interop.catz.implicits.*
+import org.postgresql.util.PSQLException
 
 trait PostgresAggregateViewCoreStore[
   Name <: String,
@@ -75,7 +76,17 @@ trait PostgresAggregateViewCoreStore[
       .through(t =>
         for
           _ <- t
-          status <- Stream.eval(readAggregateViewStatus)
+          status <- Stream
+            .retry(
+              readAggregateViewStatus,
+              500.millis,
+              x => x,
+              10,
+              {
+                case _: PSQLException => true
+                case _                => false
+              }
+            )
           s <- streamEventsFrom(None, status.map(_.next))
         yield s
       )
@@ -298,6 +309,7 @@ ${stackErs}"""
                     "status" -> Some(
                       if ready._1 then "Ready" else "Catching up"
                     ),
+                    "sequenceIds" -> status.map(_._1.sequenceIds.toJsonPretty),
                     "catchup_duration" -> status
                       .flatMap(_._1.catchupDuration)
                       .map(s => differenceToString(s)),

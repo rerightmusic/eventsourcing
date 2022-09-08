@@ -38,17 +38,17 @@ object PostgresProfileService:
             case a: ProfileEvent.ProfileFirstNameUpdated =>
               a.auto.to[D.ProfileFirstNameUpdated]
           ),
-        _.auto.to[ProfileData],
+        x => Right(x.auto.to[ProfileData]),
         _.auto.to[ProfileMeta],
         x =>
-          x match
+          Right(x match
             case a: D.ProfileCreated =>
               a.auto.to[ProfileEvent.ProfileCreated]
             case a: D.ProfileLastNameUpdated =>
               a.auto.to[ProfileEvent.ProfileLastNameUpdated]
             case a: D.ProfileFirstNameUpdated =>
               a.auto.to[ProfileEvent.ProfileFirstNameUpdated]
-        ,
+          ),
         "test",
         1.minutes
       )

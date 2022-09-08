@@ -59,9 +59,9 @@ object PostgresAggregateStores:
       id: Id,
       ev: EventData
     ) => Either[Throwable, DomEventData],
-    toAgg: (ev: DomAgg) => Agg,
+    toAgg: (ev: DomAgg) => Either[Throwable, Agg],
     toMeta: (meta: DomMeta) => Meta,
-    toEventData: (ev: DomEventData) => EventData,
+    toEventData: (ev: DomEventData) => Either[Throwable, EventData],
     schema: String,
     catchUpTimeout: Duration
   )(using
@@ -117,7 +117,7 @@ object PostgresAggregateStores:
       ev: EventData
     ) => Either[Throwable, DomEventData],
     toMeta: (meta: DomMeta) => Meta,
-    toEventData: (ev: DomEventData) => EventData,
+    toEventData: (ev: DomEventData) => Either[Throwable, EventData],
     schema: String
   )(using
     witness: ValueOf[Name],
@@ -208,15 +208,16 @@ object PostgresAggregateStores:
               .traverse((id, evs) =>
                 for
                   nextVersion <- getNextVersion(id)
-                  docs = evs.mapWithIndex((ev, idx) =>
-                    WritePostgresDocument(
+                  docs <- evs.zipWithIndex.traverse((ev, idx) =>
+                    for evData <- ZIO.fromEither(toEventData(ev._4))
+                    yield WritePostgresDocument(
                       ev._1,
                       toMeta(ev._2),
                       ev._3,
                       now,
                       nextVersion + idx,
                       false,
-                      toEventData(ev._4)
+                      evData
                     )
                   )
                 yield docs
