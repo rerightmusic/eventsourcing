@@ -308,29 +308,38 @@ ${stackErs}"""
                   Map(
                     "status" -> Some(
                       if ready._1 then "Ready" else "Catching up"
-                    ),
-                    "sequenceIds" -> status.map(_._1.sequenceIds.toJsonPretty),
+                    ).map(_.toJsonASTOrFail),
+                    "sequenceIds" -> status
+                      .map(_._1.sequenceIds)
+                      .map(_.toJsonASTOrFail),
                     "catchup_duration" -> status
                       .flatMap(_._1.catchupDuration)
-                      .map(s => differenceToString(s)),
+                      .map(s => differenceToString(s))
+                      .map(_.toJsonASTOrFail),
                     "catchup_events" -> status
                       .flatMap(_._1.catchupEventsSize)
-                      .map(s => s.toString),
+                      .map(s => s.toString)
+                      .map(_.toJsonASTOrFail),
                     "sync_duration" -> status
                       .flatMap(_._1.syncDuration)
-                      .map(s => differenceToString(s)),
+                      .map(s => differenceToString(s))
+                      .map(_.toJsonASTOrFail),
                     "sync_events" -> status
                       .flatMap(_._1.syncEventsSize)
-                      .map(s => s.toString),
+                      .map(s => s.toString)
+                      .map(_.toJsonASTOrFail),
                     "longest_duration" -> status
                       .flatMap(_._1.longestDuration)
-                      .map(s => differenceToString(s)),
+                      .map(s => differenceToString(s))
+                      .map(_.toJsonASTOrFail),
                     "longest_events" -> status
                       .flatMap(_._1.longestEventsSize)
-                      .map(s => s.toString),
+                      .map(s => s.toString)
+                      .map(_.toJsonASTOrFail),
                     "last_updated" -> status
                       .map(_._2)
                       .map(s => s.toString)
+                      .map(_.toJsonASTOrFail)
                   ).filterNot(kv => kv._2.isEmpty).toJsonASTOrFail
                 )
               )
