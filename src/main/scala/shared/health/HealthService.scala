@@ -15,7 +15,7 @@ import shared.http.json.given
 
 sealed trait Health derives JsonCodec
 case class Healthy(details: Option[Json] = None) extends Health
-case class Unhealthy(message: String) extends Health
+case class Unhealthy(details: Option[Json] = None) extends Health
 
 sealed trait HealthCheck
 case class LeafHealthCheck(name: String, check: () => Task[Health])
@@ -59,15 +59,39 @@ object HealthService:
             )
           yield EvalNodeHealthCheck(name, res)
 
-    "/health" -> cors(
-      HttpRoutes.of[RIO[R, *]] { case GET -> Root =>
-        for
-          c <- checks
-          healthChecks <- ZIO.foreach(c)(evalHealthCheck)
-          res <-
-            if (allHealthy(healthChecks))
-              Ok.apply(healthChecks.toJsonASTOrFail)
-            else InternalServerError(healthChecks.toJsonASTOrFail)
-        yield res
-      }
-    )
+    "/health" -> cors(HttpRoutes.of[RIO[R, *]] { case GET -> Root =>
+      for
+        res <- apply_(checks)
+        res_ <- res match
+          case Left(h)  => InternalServerError(h.toJsonASTOrFail)
+          case Right(h) => Ok(h.toJsonASTOrFail)
+      yield res_
+    })
+
+  def apply_[R](
+    checks: RIO[R, List[HealthCheck]]
+  ) =
+    object dsl extends Http4sDsl[RIO[R, *]]
+    import dsl.*
+
+    def evalHealthCheck(
+      checks: HealthCheck
+    ): Task[EvalHealthCheck] =
+      checks match
+        case LeafHealthCheck(name, check) =>
+          check().map(EvalLeafHealthCheck(name, _))
+        case NodeHealthCheck(name, checks) =>
+          for
+            res <- ZIO.foreach(checks)(
+              evalHealthCheck
+            )
+          yield EvalNodeHealthCheck(name, res)
+
+    for
+      c <- checks
+      healthChecks <- ZIO.foreach(c)(evalHealthCheck)
+      res <-
+        if (allHealthy(healthChecks))
+          ZIO.right(healthChecks)
+        else ZIO.left(healthChecks)
+    yield res

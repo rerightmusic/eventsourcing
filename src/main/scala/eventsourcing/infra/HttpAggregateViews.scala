@@ -14,7 +14,7 @@ import zio.interop.catz.implicits.*
 import cats.arrow.FunctionK
 import cats.data.OptionT
 import shared.health.HealthService
-import zio.ZIO
+import zio.{ZIO, Task, Ref}
 import zio.Fiber
 import shared.health.HealthCheck
 import izumi.reflect.Tag
@@ -22,60 +22,106 @@ import org.http4s.blaze.server.BlazeServerBuilder
 import scala.concurrent.duration.*
 import org.http4s.server.Router
 import shared.logging.all.Logging
-import shared.json.all.*
+import shared.json.all.{*, given}
 import shared.http.json.given
+import cats.syntax.all.*
+import org.http4s.headers.*
+
+abstract class ViewOps[R]:
+  def name: String
+  def reset: RIO[R, Unit]
+  def health: RIO[R, HealthCheck]
+  def isCaughtUp: RIO[R, Boolean]
+  def run: RIO[R, Unit]
 
 trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
   val cors = CORS.policy.withAllowOriginAll.withAllowCredentials(false)
 
-  def opsRoutes: List[(String, HttpRoutes[RIO[R, *]])]
-  def routes = opsRoutes ++ List(
-    HealthService[R](
-      for {
-        c <- checks
-      } yield c
-    )
-  )
-
-  def isCaughtUp: RIO[R, Boolean]
-
-  def runViews: RIO[R & Logging, List[Fiber.Runtime[Throwable, Unit]]]
+  def viewOps: List[ViewOps[R]]
 
   def run(port: Int, host: String) =
     for
+      ref <- Ref.make[Map[String, Fiber.Runtime[Throwable, Unit]]](Map())
       fiber <- BlazeServerBuilder[RIO[R, *]]
         .withIdleTimeout(25.minutes)
         .withResponseHeaderTimeout(20.minutes)
         .bindHttp(port, host)
         .withHttpWebSocketApp(builder =>
           Router[RIO[R, *]](
-            (List("status" -> HttpRoutes.of[RIO[R, *]] { case GET -> Root =>
-              for
-                c <- isCaughtUp
-                res <-
-                  if c then
-                    Ok(
-                      Map[String, String]("status" -> s"Ready").toJsonASTOrFail
-                    )
-                  else
-                    ServiceUnavailable(
-                      Map[String, String](
-                        "status" -> s"Catching up"
-                      ).toJsonASTOrFail
-                    )
-              yield res
-            }) ++ routes): _*
+            (viewOps
+              .map(v =>
+                v.name -> (HttpRoutes.of[RIO[R, *]] {
+                  case GET -> Root =>
+                    for
+                      ref_ <- ref.get
+                      isRunning <- ref_
+                        .get(v.name)
+                        .traverse(_.status.map(!_.isDone))
+                      res <- HealthService.apply_(v.health.map(List(_)))
+                      res_ <- res match
+                        case Left(h) =>
+                          InternalServerError(
+                            Map(
+                              "health" -> h.toJsonASTOrFail,
+                              "fiber_running" -> isRunning.toJsonASTOrFail
+                            ).toJsonASTOrFail
+                          )
+                        case Right(h) =>
+                          Ok(
+                            Map(
+                              "health" -> h.toJsonASTOrFail,
+                              "fiber_running" -> isRunning.toJsonASTOrFail
+                            ).toJsonASTOrFail
+                          )
+                    yield res_
+
+                  case GET -> Root / "reset" =>
+                    for
+                      _ <- v.reset
+                      res <- Ok(s"Reset ${v.name}")
+                    yield res
+                })
+              )) ++ List("/" -> (HttpRoutes.of[RIO[R, *]] {
+              case req @ GET -> Root =>
+                for
+                  res <- Ok(
+                    viewOps
+                      .traverse(x =>
+                        for res <- HealthService.apply_(x.health.map(List(_)))
+                        yield x.name -> Map(
+                          "healthy" -> (if res.isLeft then "Unhealthy"
+                                        else "Healthy").toJsonASTOrFail,
+                          "url" -> s"${req.headers.get[`X-Forwarded-Proto`].fold("http")(_.scheme.value)}://${req.headers
+                            .get[Host]
+                            .map(h => s"${h.host}${h.port.fold("")(p => s":$p")}")
+                            .getOrElse("")}/${x.name}".toJsonASTOrFail
+                        )
+                      )
+                      .map(_.toMap.toJsonASTOrFail)
+                  )
+                yield res
+              case req @ GET -> Root / "status" =>
+                for
+                  caughtUps <- viewOps.traverse(x => x.isCaughtUp)
+                  res <-
+                    if caughtUps.forall(x => x) then
+                      Ok(Map("Result" -> "Ready").toJsonASTOrFail)
+                    else
+                      ServiceUnavailable(
+                        Map("Result" -> "Catching Up").toJsonASTOrFail
+                      )
+                yield res
+            })): _*
           ).orNotFound
         )
         .serve
         .compile
         .drain
         .fork
-      fibers <- runViews
-      _ <- (List(fiber) ++ fibers).fold(Fiber.unit)(_ <> _).join
+      fibers <- viewOps.traverse(v => v.run.fork.map(v.name -> _)).map(_.toMap)
+      _ <- ref.set(fibers)
+      _ <- (List(fiber) ++ fibers.values.toList).fold(Fiber.unit)(_ <> _).join
     yield ()
-
-  def checks: RIO[R, List[HealthCheck]]
 
 object HttpAggregateViews:
   def apply[Aggs <: NonEmptyTuple] = new HttpAggregateViewsDsl[Aggs]
@@ -87,11 +133,7 @@ object HttpAggregateViews:
 
   given empty[R]: HttpAggregateViews[EmptyTuple, R] =
     new HttpAggregateViews[EmptyTuple, R]:
-      def opsRoutes = List()
-      def checks = ZIO.succeed(List())
-      def runViews = ZIO.succeed(List())
-
-      def isCaughtUp = ZIO.succeed(true)
+      def viewOps = List()
 
   given views[
     View,
@@ -109,40 +151,13 @@ object HttpAggregateViews:
     ]
   ): HttpAggregateViews[View *: Rest, R] =
     new HttpAggregateViews[View *: Rest, R]:
-      def checks =
-        for {
-          h1 <- AggregateViewService[View]
-            .store(x => ZIO.succeed(x.health))
-          h2 <- rest.checks
-        } yield h1 :: h2
-
-      def opsRoutes =
-        s"/reset/${view.instance.storeName}" -> cors(
-          HttpRoutes.of[RIO[R, *]] { case GET -> Root =>
-            for
-              _ <- AggregateViewService[View]
-                .store(
-                  _.resetAggregateView
-                )
-              res <- Ok.apply(
-                Map[String, String](
-                  "result" -> s"${view.instance.storeName} was reset"
-                ).toJsonASTOrFail
-              )
-            yield res
-          }
-        ) :: rest.opsRoutes
-
-      def isCaughtUp = for
-        r <- AggregateViewService[View].isCaughtUp
-        r2 <- rest.isCaughtUp
-      yield r && r2
-
-      def runViews = for
-        fiber <- AggregateViewService[View]
-          .run(AggregateViewMode.Continue, true)
-          .tapError(e => Logging.error(e.toString))
-          .fork
-
-        fibers <- rest.runViews
-      yield fiber :: fibers
+      def viewOps: List[ViewOps[R]] = new ViewOps {
+        def name: String = view.instance.storeName
+        def reset: RIO[R, Unit] =
+          AggregateViewService[View].store(_.resetAggregateView)
+        def health: RIO[R, HealthCheck] =
+          AggregateViewService[View].store(x => ZIO.succeed(x.health))
+        def isCaughtUp: RIO[R, Boolean] = AggregateViewService[View].isCaughtUp
+        def run: RIO[R, Unit] =
+          AggregateViewService[View].run(AggregateViewMode.Continue, true)
+      } :: rest.viewOps

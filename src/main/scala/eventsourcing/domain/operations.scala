@@ -213,14 +213,37 @@ object operations:
       ZEnv & Logging,
     Throwable,
     Unit
-  ] = runAggregateView_(mode, subscribe).retry(
-    (Schedule.spaced(1.second) >>> Schedule.elapsed)
-      .whileOutput(_ < 1.minute) && Schedule
-      .recurWhile {
-        case _: PSQLException => true
-        case _                => false
-      }
-  )
+  ] = runAggregateView_(mode, subscribe)
+    .tapCause(err =>
+      for
+        _ <- Logging.error(
+          "Something went wrong",
+          err
+        )
+        store <- ZIO
+          .environment[
+            AggregateViewStore[
+              aggView.ActualView,
+              aggView.Query,
+              aggView.Aggregates
+            ] & ZEnv
+          ]
+        _ <- store.get.mergeAggregateViewStatus(
+          AggregateViewStatus(
+            sequenceIds = Map(),
+            error = Some(err.toString)
+          )
+        )
+      yield ()
+    )
+    .retry(
+      (Schedule.spaced(1.second) >>> Schedule.elapsed)
+        .whileOutput(_ < 1.minute) && Schedule
+        .recurWhile {
+          case _: PSQLException => true
+          case _                => false
+        }
+    )
 
   def runAggregateView_[View](using
     aggView: AggregateViewClass[View],

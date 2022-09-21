@@ -287,63 +287,75 @@ ${stackErs}"""
       res <- f
     yield res
 
-  def health = NodeHealthCheck(
-    s"AggregateView ${view.storeName}",
-    List(
-      LeafHealthCheck(
-        "Info",
-        () =>
-          (for
-            ready <- isReady
-            now <- now
-            status <- readAggregateViewStatusM.transact(
-              env.get[WithTransactor[Name]].transactor
-            )
-          yield status
-            .flatMap(_._1.error)
-            .map(Unhealthy(_))
-            .getOrElse(
-              Healthy(
-                Some(
-                  Map(
-                    "status" -> Some(
+  def health =
+    NodeHealthCheck(
+      s"AggregateView ${view.storeName}",
+      List(
+        LeafHealthCheck(
+          "Info",
+          () =>
+            (for
+              ready <- isReady
+              now <- now
+              status <- readAggregateViewStatusM.transact(
+                env.get[WithTransactor[Name]].transactor
+              )
+              details = Map(
+                "status" -> Some(
+                  status.map(
+                    _._1.error.fold(
                       if ready._1 then "Ready" else "Catching up"
-                    ).map(_.toJsonASTOrFail),
-                    "sequenceIds" -> status
-                      .map(_._1.sequenceIds)
-                      .map(_.toJsonASTOrFail),
-                    "catchup_duration" -> status
-                      .flatMap(_._1.catchupDuration)
-                      .map(s => differenceToString(s))
-                      .map(_.toJsonASTOrFail),
-                    "catchup_events" -> status
-                      .flatMap(_._1.catchupEventsSize)
-                      .map(s => s.toString)
-                      .map(_.toJsonASTOrFail),
-                    "sync_duration" -> status
-                      .flatMap(_._1.syncDuration)
-                      .map(s => differenceToString(s))
-                      .map(_.toJsonASTOrFail),
-                    "sync_events" -> status
-                      .flatMap(_._1.syncEventsSize)
-                      .map(s => s.toString)
-                      .map(_.toJsonASTOrFail),
-                    "longest_duration" -> status
-                      .flatMap(_._1.longestDuration)
-                      .map(s => differenceToString(s))
-                      .map(_.toJsonASTOrFail),
-                    "longest_events" -> status
-                      .flatMap(_._1.longestEventsSize)
-                      .map(s => s.toString)
-                      .map(_.toJsonASTOrFail),
-                    "last_updated" -> status
-                      .map(_._2)
-                      .map(s => s.toString)
-                      .map(_.toJsonASTOrFail)
-                  ).filterNot(kv => kv._2.isEmpty).toJsonASTOrFail
+                    )(e => s"Failed, $e")
+                  )
+                ).map(_.toJsonASTOrFail),
+                "sequenceIds" -> status
+                  .map(_._1.sequenceIds)
+                  .map(_.toJsonASTOrFail),
+                "catchup_duration" -> status
+                  .flatMap(_._1.catchupDuration)
+                  .map(s => differenceToString(s))
+                  .map(_.toJsonASTOrFail),
+                "catchup_events" -> status
+                  .flatMap(_._1.catchupEventsSize)
+                  .map(s => s.toString)
+                  .map(_.toJsonASTOrFail),
+                "sync_duration" -> status
+                  .flatMap(_._1.syncDuration)
+                  .map(s => differenceToString(s))
+                  .map(_.toJsonASTOrFail),
+                "sync_events" -> status
+                  .flatMap(_._1.syncEventsSize)
+                  .map(s => s.toString)
+                  .map(_.toJsonASTOrFail),
+                "longest_duration" -> status
+                  .flatMap(_._1.longestDuration)
+                  .map(s => differenceToString(s))
+                  .map(_.toJsonASTOrFail),
+                "longest_events" -> status
+                  .flatMap(_._1.longestEventsSize)
+                  .map(s => s.toString)
+                  .map(_.toJsonASTOrFail),
+                "last_updated" -> status
+                  .map(_._2)
+                  .map(s => s.toString)
+                  .map(_.toJsonASTOrFail)
+              ).filterNot(kv => kv._2.isEmpty).toJsonASTOrFail
+            yield status
+              .flatMap(_._1.error)
+              .map(_ => Unhealthy(Some(details)))
+              .getOrElse(
+                Healthy(
+                  Some(
+                    details
+                  )
+                )
+              )).catchAll(err =>
+              ZIO.succeed(
+                Unhealthy(
+                  Some(Map("message" -> err.getMessage).toJsonASTOrFail)
                 )
               )
-            )).catchAll(err => ZIO.succeed(Unhealthy(err.getMessage)))
+            )
+        )
       )
     )
-  )

@@ -584,23 +584,23 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
     runSync(for
       _ <- fork(AggregateView[Account].run(AggregateViewMode.Restart, true))
       _ <- transactM(t =>
-        sql"""ALTER TABLE test.aggregate_views RENAME TO aggregate_views2""".update.run
+        sql"""ALTER TABLE test.accounts RENAME TO accounts2""".update.run
           .transact(t)
       )
       _ <- zio.clock.sleep(2.seconds)
       _ <- transactM(t =>
-        sql"""ALTER TABLE test.aggregate_views2 RENAME TO aggregate_views""".update.run
+        sql"""ALTER TABLE test.accounts2 RENAME TO accounts""".update.run
           .transact(t)
       )
       _ <- createAccountsAndProfiles(3)
       _ <- zio.clock.sleep(2.seconds)
       _ <- transactM(t =>
-        sql"""ALTER TABLE test.aggregate_views RENAME TO aggregate_views2""".update.run
+        sql"""ALTER TABLE test.accounts RENAME TO accounts2""".update.run
           .transact(t)
       )
       _ <- zio.clock.sleep(2.seconds)
       _ <- transactM(t =>
-        sql"""ALTER TABLE test.aggregate_views2 RENAME TO aggregate_views""".update.run
+        sql"""ALTER TABLE test.accounts2 RENAME TO accounts""".update.run
           .transact(t)
       )
       viewsSize <- AggregateView[Account].store(

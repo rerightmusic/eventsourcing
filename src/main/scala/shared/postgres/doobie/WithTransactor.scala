@@ -13,6 +13,7 @@ import zio.*
 import zio.interop.catz.*
 import zio.interop.catz.implicits.*
 import doobie.util.*
+import shared.json.all.{given, *}
 
 import javax.sql.DataSource
 import scala.concurrent.ExecutionContext
@@ -33,7 +34,14 @@ abstract class WithTransactor[S <: String] {
           .to[List]
           .transact[Task](transactor)
           .fold(
-            e => Unhealthy(e.getMessage.getOrElse("No message")),
+            e =>
+              Unhealthy(
+                Some(
+                  Map(
+                    "message" -> e.getMessage.getOrElse("No message")
+                  ).toJsonASTOrFail
+                )
+              ),
             _ => Healthy()
           )
     )
@@ -77,6 +85,7 @@ object WithTransactor {
                 config.setJdbcUrl(
                   s"jdbc:postgresql://${conf.host}:${conf.port}/${conf.database}"
                 )
+                config.addDataSourceProperty("tcpKeepAlive", true)
               case Some(connectionName) =>
                 config.setJdbcUrl(
                   String.format("jdbc:postgresql:///%s", conf.database)
@@ -90,10 +99,11 @@ object WithTransactor {
                   connectionName
                 )
                 config.addDataSourceProperty("ipTypes", "PUBLIC,PRIVATE")
+                config.addDataSourceProperty("tcpKeepAlive", true)
 
             config.setMinimumIdle(3);
             config.setConnectionTimeout(30000);
-            config.setIdleTimeout(30000);
+            config.setIdleTimeout(600000);
             config.setMaxLifetime(1800000);
             config.setLeakDetectionThreshold(48000);
             config.setMaximumPoolSize(conf.poolSize)
