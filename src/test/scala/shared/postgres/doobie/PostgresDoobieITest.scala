@@ -307,7 +307,7 @@ class PostgresDoobieITest
           .where(
             Filter.jsonObjectArrayContainsAnyValue(
               "data->'objectList'",
-              x => s"${x}->'id'",
+              x => s"$x->'id'",
               data1.objectList.map(_.id) ++ data2.objectList.map(_.id)
             )
           )
@@ -325,7 +325,7 @@ class PostgresDoobieITest
           .where(
             Filter.jsonObjectArrayContainsAnyValue(
               "data->'objectList'",
-              x => s"${x}->'id'",
+              x => s"$x->'id'",
               List()
             )
           )
@@ -422,7 +422,7 @@ class PostgresDoobieITest
             .or(
               Filter.jsonObjectArrayContainsAnyValue(
                 "data->'objectList'",
-                x => s"${x}->'id'",
+                x => s"$x->'id'",
                 data2.objectList.map(_.id)
               )
             )

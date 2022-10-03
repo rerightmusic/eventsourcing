@@ -242,7 +242,8 @@ trait PostgresSchemalessAggregateViewStore:
               .map(getFieldAndValue)
               .toList
               .groupBy(_._1)
-              .view.mapValues(_.map(_._2))
+              .view
+              .mapValues(_.map(_._2))
               .toList
               .foldLeft[FilterPredicate](Filter._false)((prev, next) =>
                 prev.or(

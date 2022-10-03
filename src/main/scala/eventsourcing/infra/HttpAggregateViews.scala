@@ -23,7 +23,7 @@ import scala.concurrent.duration.*
 import org.http4s.server.Router
 import shared.logging.all.Logging
 import shared.json.all.{*, given}
-import shared.http.json.given
+import shared.http.all.{*, given}
 import cats.syntax.all.*
 import org.http4s.headers.*
 
@@ -47,71 +47,84 @@ trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
         .withResponseHeaderTimeout(20.minutes)
         .bindHttp(port, host)
         .withHttpWebSocketApp(builder =>
-          Router[RIO[R, *]](
-            (viewOps
-              .map(v =>
-                v.name -> (HttpRoutes.of[RIO[R, *]] {
-                  case GET -> Root =>
-                    for
-                      ref_ <- ref.get
-                      isRunning <- ref_
-                        .get(v.name)
-                        .traverse(_.status.map(!_.isDone))
-                      res <- HealthService.apply_(v.health.map(List(_)))
-                      res_ <- res match
-                        case Left(h) =>
-                          InternalServerError(
-                            Map(
-                              "health" -> h.toJsonASTOrFail,
-                              "fiber_running" -> isRunning.toJsonASTOrFail
-                            ).toJsonASTOrFail
-                          )
-                        case Right(h) =>
-                          Ok(
-                            Map(
-                              "health" -> h.toJsonASTOrFail,
-                              "fiber_running" -> isRunning.toJsonASTOrFail
-                            ).toJsonASTOrFail
-                          )
-                    yield res_
+          noCaching(
+            Router[RIO[R, *]](
+              (viewOps
+                .map(v =>
+                  v.name -> (HttpRoutes.of[RIO[R, *]] {
+                    case GET -> Root =>
+                      for
+                        ref_ <- ref.get
+                        isRunning <- ref_
+                          .get(v.name)
+                          .traverse(_.status.map(!_.isDone))
+                        res <- HealthService.apply_(v.health.map(List(_)))
+                        res_ <- res match
+                          case Left(h) =>
+                            InternalServerError(
+                              Map(
+                                "health" -> h.toJsonASTOrFail,
+                                "fiber_running" -> isRunning.toJsonASTOrFail
+                              ).toJsonASTOrFail
+                            )
+                          case Right(h) =>
+                            Ok(
+                              Map(
+                                "health" -> h.toJsonASTOrFail,
+                                "fiber_running" -> isRunning.toJsonASTOrFail
+                              ).toJsonASTOrFail
+                            )
+                      yield res_
 
-                  case GET -> Root / "reset" =>
-                    for
-                      _ <- v.reset
-                      res <- Ok(s"Reset ${v.name}")
-                    yield res
-                })
-              )) ++ List("/" -> (HttpRoutes.of[RIO[R, *]] {
-              case req @ GET -> Root =>
-                for
-                  res <- Ok(
-                    viewOps
-                      .traverse(x =>
-                        for res <- HealthService.apply_(x.health.map(List(_)))
-                        yield x.name -> Map(
-                          "healthy" -> (if res.isLeft then "Unhealthy"
-                                        else "Healthy").toJsonASTOrFail,
-                          "url" -> s"${req.headers.get[`X-Forwarded-Proto`].fold("http")(_.scheme.value)}://${req.headers
-                            .get[Host]
-                            .map(h => s"${h.host}${h.port.fold("")(p => s":$p")}")
-                            .getOrElse("")}/${x.name}".toJsonASTOrFail
+                    case GET -> Root / "reset" =>
+                      for
+                        _ <- v.reset
+                        res <- Ok(
+                          Map("message" -> s"Reset ${v.name}").toJsonASTOrFail
                         )
-                      )
-                      .map(_.toMap.toJsonASTOrFail)
-                  )
-                yield res
-              case req @ GET -> Root / "status" =>
-                for
-                  caughtUps <- viewOps.traverse(x => x.isCaughtUp)
-                  res <-
-                    if caughtUps.forall(x => x) then
-                      Ok(Map("Result" -> "Ready").toJsonASTOrFail)
-                    else
-                      ServiceUnavailable(
-                        Map("Result" -> "Catching Up").toJsonASTOrFail
-                      )
-                yield res
-            })): _*
+                      yield res
+                  })
+                )) ++ List("/" -> (HttpRoutes.of[RIO[R, *]] {
+                case req @ GET -> Root =>
+                  for
+                    ref_ <- ref.get
+                    res <- Ok(
+                      viewOps
+                        .traverse(x =>
+                          for
+                            res <- HealthService.apply_(x.health.map(List(_)))
+                            notRunning <- ref_
+                              .get(x.name)
+                              .traverse(_.status.map(_.isDone))
+                              .map(_.getOrElse(true))
+                          yield x.name -> Map(
+                            "healthy" -> (if res.isLeft || notRunning then
+                                            "Unhealthy"
+                                          else "Healthy").toJsonASTOrFail,
+                            "url" -> s"${req.headers
+                              .get[`X-Forwarded-Proto`]
+                              .fold("http")(_.scheme.value)}://${req.headers
+                              .get[Host]
+                              .map(h => s"${h.host}${h.port.fold("")(p => s":$p")}")
+                              .getOrElse("")}/${x.name}".toJsonASTOrFail
+                          )
+                        )
+                        .map(_.toMap.toJsonASTOrFail)
+                    )
+                  yield res
+                case req @ GET -> Root / "status" =>
+                  for
+                    caughtUps <- viewOps.traverse(x => x.isCaughtUp)
+                    res <-
+                      if caughtUps.forall(x => x) then
+                        Ok(Map("Result" -> "Ready").toJsonASTOrFail)
+                      else
+                        ServiceUnavailable(
+                          Map("Result" -> "Catching Up").toJsonASTOrFail
+                        )
+                  yield res
+              })): _*
+            )
           ).orNotFound
         )
         .serve

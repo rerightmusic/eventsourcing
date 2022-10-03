@@ -44,13 +44,13 @@ def runSync[E <: Throwable, A](
           envFile = Properties
             .envOrNone("TESTS_ENV_FILE")
             .getOrElse(s"${System.getProperty("user.dir")}/../tests.env")
-          envVars <- Conf.getEnvVars(List(new File(envFile)))
+          preConfEnv = Logging.console("aggregates-tests")
+          envVars <- Conf
+            .getEnvVars(List(new File(envFile)))
+            .provideCustomLayer(preConfEnv)
           pgConfig <- PostgresConfig.fromEnv["Accounts"](envVars)
           layer =
-            Logging
-              .console(
-                "aggregates-tests"
-              ) >+>
+            preConfEnv >+>
               WithTransactor.live["Accounts"](pgConfig, te) >+>
               ZEnv.live >+>
               I.PostgresAccountService.live >+>

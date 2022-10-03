@@ -55,19 +55,22 @@ def runSync[E <: Throwable, A](zio: ZIO[ZEnv, E, A]) = Runtime.default
     a => a
   )
 
+val preConfEnv = Logging.console("test")
 val pgConfig = runSync(for
   _ <- ZIO.unit
   envFile = Properties
     .envOrNone("TESTS_ENV_FILE")
-    .getOrElse(s"${System.getProperty("user.dir")}/tests.env")
-  envVars <- Conf.getEnvVars(List(new File(envFile)))
+    .getOrElse(s"${System.getProperty("user.dir")}/../tests.env")
+  envVars <- Conf
+    .getEnvVars(List(new File(envFile)))
+    .provideCustomLayer(preConfEnv)
   pgConfig <- PostgresConfig.fromEnv["Test"](envVars)
 yield pgConfig)
 
 def transact[A](f: Transactor[Task] => Task[A]) =
   runSync(for
     te <- ZIO.access[Blocking](_.get.blockingExecutor.asEC)
-    layer = Logging.console("test") >>> WithTransactor.live(pgConfig, te)
+    layer = preConfEnv >>> WithTransactor.live(pgConfig, te)
     res <- ZIO
       .accessM[Has[WithTransactor["Test"]]](x => f(x.get.transactor))
       .provideLayer(layer)
