@@ -217,7 +217,7 @@ object operations:
     .tapCause(err =>
       for
         _ <- Logging.error(
-          "Something went wrong",
+          s"Something went wrong with view ${aggView.instance.storeName}, ${err.prettyPrint}",
           err
         )
         store <- ZIO

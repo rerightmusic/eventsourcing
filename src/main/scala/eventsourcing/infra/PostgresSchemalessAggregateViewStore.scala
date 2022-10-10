@@ -141,14 +141,13 @@ trait PostgresSchemalessAggregateViewStore:
           def persistAggregateViewM(
             view: Map[Id, D.Schemaless[Id, DomMeta, DomData]]
           ) = view.values.toList.toNel.fold(pure(()))(view_ =>
-            for
-              ups <- view_
-                .traverse(v =>
-                  for
-                    data <- toData(v.data) match
-                      case Left(e)  => raiseError(e)
-                      case Right(r) => pure(r)
-                  yield PostgresDocument(
+            view_
+              .traverse(v =>
+                for
+                  data <- toData(v.data) match
+                    case Left(e)  => raiseError(e)
+                    case Right(r) => pure(r)
+                  doc = PostgresDocument(
                     id = v.id,
                     meta = toMeta(v.meta),
                     createdBy = v.createdBy,
@@ -158,9 +157,10 @@ trait PostgresSchemalessAggregateViewStore:
                     created = v.created,
                     lastUpdated = v.lastUpdated
                   )
-                )
-              _ <- upsertInto(tableName, ups)
-            yield ()
+                  _ <- upsertInto(tableName, doc)
+                yield ()
+              )
+              .map(_ => ())
           )
 
           def toSchemaless(v: PostgresDocument[Id, Meta, Data]) = for

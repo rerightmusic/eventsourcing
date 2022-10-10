@@ -34,9 +34,11 @@ abstract class ViewOps[R]:
   def isCaughtUp: RIO[R, Boolean]
   def run: RIO[R, Unit]
 
-trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
+trait HttpAggregateViews[Aggs <: Tuple, R <: Logging]
+    extends Http4sDsl[RIO[R, *]]:
   val cors = CORS.policy.withAllowOriginAll.withAllowCredentials(false)
 
+  // Change to map
   def viewOps: List[ViewOps[R]]
 
   def run(port: Int, host: String) =
@@ -79,6 +81,7 @@ trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
                     case GET -> Root / "reset" =>
                       for
                         _ <- v.reset
+                        _ <- Logging.info(s"${v.name} was reset")
                         res <- Ok(
                           Map("message" -> s"Reset ${v.name}").toJsonASTOrFail
                         )
@@ -123,6 +126,15 @@ trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
                           Map("Result" -> "Catching Up").toJsonASTOrFail
                         )
                   yield res
+                case req @ GET -> Root / "reset" =>
+                  for
+                    _ <- viewOps.traverse(x => x.reset)
+                    res <- Ok(
+                      Map(
+                        "message" -> viewOps.map(x => s"Reset ${x.name}")
+                      ).toJsonASTOrFail
+                    )
+                  yield res
               })): _*
             )
           ).orNotFound
@@ -131,7 +143,9 @@ trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
         .compile
         .drain
         .fork
-      fibers <- viewOps.traverse(v => v.run.fork.map(v.name -> _)).map(_.toMap)
+      fibers <- viewOps
+        .traverse(v => v.run.fork.map(v.name -> _))
+        .map(_.toMap)
       _ <- ref.set(fibers)
       _ <- (List(fiber) ++ fibers.values.toList).fold(Fiber.unit)(_ <> _).join
     yield ()
@@ -139,19 +153,19 @@ trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
 object HttpAggregateViews:
   def apply[Aggs <: NonEmptyTuple] = new HttpAggregateViewsDsl[Aggs]
   class HttpAggregateViewsDsl[Aggs <: NonEmptyTuple]:
-    def run[R](using
+    def run[R <: Logging](using
       r: HttpAggregateViews[Aggs, R]
     ) =
       r.run
 
-  given empty[R]: HttpAggregateViews[EmptyTuple, R] =
+  given empty[R <: Logging]: HttpAggregateViews[EmptyTuple, R] =
     new HttpAggregateViews[EmptyTuple, R]:
       def viewOps = List()
 
   given views[
     View,
     Rest <: Tuple,
-    R <: AggregateViewService[View]
+    R <: AggregateViewService[View] & Logging
   ](using
     view: AggregateViewClass[View],
     rest: HttpAggregateViews[Rest, R],
