@@ -11,6 +11,7 @@ import doobie.util.update.Update
 import doobie.{Fragment, Read, Write}
 import shared.principals.PrincipalId
 import shared.postgres.doobie.all.given
+import shared.logging.all.*
 import java.time.OffsetDateTime
 import doobie.util.transactor.Transactor
 import cats.Monad
@@ -23,13 +24,13 @@ import shared.json.all.*
 object operations:
   // TODO put in a service such that it has a Dev / Prod mode
   implicit val logHandler: LogHandler =
-    val jdkLogger = Logger.getLogger(getClass.getName)
     LogHandler {
       case Success(s, a, e1, e2) =>
         ()
-      // if s.contains("aggregate_views") then ()
+      // The following code comes in handy when needing to print SQL statements in Dev. Don't remove
+      // if !s.contains("ON CONFLICT") || s.contains("aggregate_views") then ()
       // else
-      //   jdkLogger.info(s"""Successful Statement Execution:
+      //   logger.info(s"""Successful Statement Execution:
       //                   |
       //                   |  ${s.linesIterator
       //     .dropWhile(_.trim.isEmpty)
@@ -39,7 +40,7 @@ object operations:
       //                   |   elapsed = ${e1.toMillis} ms exec + ${e2.toMillis} ms processing (${(e1 + e2).toMillis} ms total)
       // """.stripMargin)
       case ProcessingFailure(s, a, e1, e2, t) =>
-        jdkLogger.severe(s"""Failed Resultset Processing:
+        logger.error(s"""Failed Resultset Processing:
           |
           |  ${s.linesIterator.dropWhile(_.trim.isEmpty).mkString("\n  ")}
           |
@@ -49,7 +50,7 @@ object operations:
         """.stripMargin)
 
       case ExecFailure(s, a, e1, t) =>
-        jdkLogger.severe(s"""Failed Statement Execution:
+        logger.error(s"""Failed Statement Execution:
           |
           |  ${s.linesIterator.dropWhile(_.trim.isEmpty).mkString("\n  ")}
           |
@@ -66,12 +67,13 @@ object operations:
       "created_by",
       "last_updated_by",
       "data",
+      "schema_version",
       "deleted",
       "created",
       "last_updated"
     )
   val strPGDocStar =
-    "id,meta,created_by,last_updated_by,data,deleted,created,last_updated"
+    "id,meta,created_by,last_updated_by,data,schema_version,deleted,created,last_updated"
 
   val frPGDocStar = Fragment.const(strPGDocStar)
   val frPGDocStarPrefixed = (prefix: String) =>
@@ -83,20 +85,26 @@ object operations:
     tableName: String,
     doc: PostgresDocument[Id, Meta, Data]
   )(implicit
-    writeDoc: Write[PostgresDocument[Id, Meta, Data]]
-  ): doobie.ConnectionIO[Int] = upsertInto(tableName, NonEmptyList.one(doc))
+    w: Write[PostgresDocument[Id, Meta, Data]]
+  ): doobie.ConnectionIO[Int] =
+    Update(
+      s"INSERT INTO $tableName (${strPGDocStar}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        ++
+          s"ON CONFLICT (id, schema_version) DO UPDATE SET last_updated_by = EXCLUDED.last_updated_by, data = EXCLUDED.data, last_updated = EXCLUDED.last_updated, deleted = EXCLUDED.deleted"
+    )(w, logHandler).run(doc)
 
   def upsertInto[Id, Meta, Data](
     tableName: String,
     docs: NonEmptyList[PostgresDocument[Id, Meta, Data]]
   )(using
-    Write[PostgresDocument[Id, Meta, Data]]
+    w: Write[PostgresDocument[Id, Meta, Data]]
   ): doobie.ConnectionIO[Int] =
     Update(
-      s"INSERT INTO $tableName (${strPGDocStar}) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+      s"INSERT INTO $tableName (${strPGDocStar}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
         ++
-          s"ON CONFLICT (id) DO UPDATE SET last_updated_by = EXCLUDED.last_updated_by, data = EXCLUDED.data, last_updated = EXCLUDED.last_updated, deleted = EXCLUDED.deleted"
-    )(implicitly, logHandler).updateMany(docs)
+          s"ON CONFLICT (id, schema_version) DO UPDATE SET last_updated_by = EXCLUDED.last_updated_by, data = EXCLUDED.data, last_updated = EXCLUDED.last_updated, deleted = EXCLUDED.deleted"
+    )(w, logHandler)
+      .updateMany(docs)
 
   def insertInto[Id, Meta, Data](
     tableName: String,
@@ -113,8 +121,8 @@ object operations:
     w: Write[PostgresDocument[Id, Meta, Data]]
   ): doobie.ConnectionIO[Int] =
     Update(
-      s"INSERT INTO $tableName (" + strPGDocStar + s") VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).updateMany(docs)
+      s"INSERT INTO $tableName (" + strPGDocStar + s") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )(w, logHandler).updateMany(docs)
 
   def insertInto[Id, Meta, Data](
     tableName: String,
@@ -152,13 +160,17 @@ object operations:
       .update(logHandler)
       .run
 
-  def trySelectById[Id, Meta, Data](tableName: String, id: Id)(implicit
+  def trySelectById[Id, Meta, Data](
+    tableName: String,
+    schemaVersion: Int,
+    id: Id
+  )(implicit
     idPut: Put[Id],
     read: Read[PostgresDocument[Id, Meta, Data]]
   ): Free[connection.ConnectionOp, Option[
     PostgresDocument[Id, Meta, Data]
   ]] =
-    trySelectByIds(tableName, NonEmptyList.one(id)).flatMap {
+    trySelectByIds(tableName, schemaVersion, NonEmptyList.one(id)).flatMap {
       case Nil     => connection.pure(None)
       case List(h) => connection.pure(Some(h))
       case List(_*) =>
@@ -169,11 +181,12 @@ object operations:
         )
     }
 
-  def selectById[Id, Meta, Data](tableName: String, id: Id)(implicit
+  def selectById[Id, Meta, Data](tableName: String, schemaVersion: Int, id: Id)(
+    implicit
     idPut: Put[Id],
     read: Read[PostgresDocument[Id, Meta, Data]]
   ): Free[connection.ConnectionOp, PostgresDocument[Id, Meta, Data]] =
-    selectByIds(tableName, NonEmptyList.one(id)).flatMap {
+    selectByIds(tableName, schemaVersion, NonEmptyList.one(id)).flatMap {
       case NonEmptyList(head, Nil) => connection.pure(head)
       case NonEmptyList(_, _) =>
         connection.raiseError[PostgresDocument[Id, Meta, Data]](
@@ -181,20 +194,20 @@ object operations:
         )
     }
 
-  def selectAll[Id, Meta, Data](tableName: String)(implicit
+  def selectAll[Id, Meta, Data](tableName: String, schemaVersion: Int)(implicit
     read: Read[PostgresDocument[Id, Meta, Data]]
   ): Free[connection.ConnectionOp, List[
     PostgresDocument[Id, Meta, Data]
   ]] =
     Fragment
       .const(
-        s"SELECT " + strPGDocStar + s" FROM $tableName where deleted = false order by last_updated DESC"
+        s"SELECT " + strPGDocStar + s" FROM $tableName where schema_version = ${schemaVersion} AND deleted = false order by last_updated DESC"
       )
       .query[PostgresDocument[Id, Meta, Data]]
       .to[List]
 
-  def selectAllStream[Id, Meta, Data](tableName: String)(implicit
-    read: Read[PostgresDocument[Id, Meta, Data]]
+  def selectAllStream[Id, Meta, Data](tableName: String, schemaVersion: Int)(
+    implicit read: Read[PostgresDocument[Id, Meta, Data]]
   ): fs2.Stream[ConnectionIO, PostgresDocument[
     Id,
     Meta,
@@ -202,19 +215,22 @@ object operations:
   ]] =
     Fragment
       .const(
-        s"SELECT " + strPGDocStar + s" FROM $tableName where deleted = false order by last_updated DESC"
+        s"SELECT " + strPGDocStar + s" FROM $tableName where schema_version = ${schemaVersion} AND deleted = false order by last_updated DESC"
       )
       .query[PostgresDocument[Id, Meta, Data]]
       .stream
 
-  def selectByIds[Id, Meta, Data](tableName: String, ids: NonEmptyList[Id])(
-    implicit
+  def selectByIds[Id, Meta, Data](
+    tableName: String,
+    schemaVersion: Int,
+    ids: NonEmptyList[Id]
+  )(implicit
     idPut: Put[Id],
     read: Read[PostgresDocument[Id, Meta, Data]]
   ): Free[connection.ConnectionOp, NonEmptyList[
     PostgresDocument[Id, Meta, Data]
   ]] =
-    trySelectByIds(tableName, ids)
+    trySelectByIds(tableName, schemaVersion, ids)
       .flatMap {
         case h :: t => connection.pure(NonEmptyList(h, t))
         case Nil =>
@@ -227,8 +243,11 @@ object operations:
       }
 
   // ORDINALITY PRESERVES ORDERING
-  def trySelectByIds[Id, Meta, Data](tableName: String, ids: NonEmptyList[Id])(
-    implicit
+  def trySelectByIds[Id, Meta, Data](
+    tableName: String,
+    schemaVersion: Int,
+    ids: NonEmptyList[Id]
+  )(implicit
     idPut: Put[Id],
     read: Read[PostgresDocument[Id, Meta, Data]]
   ): Free[connection.ConnectionOp, List[
@@ -240,17 +259,19 @@ object operations:
         fr0" UNNEST(ARRAY[",
         fr0",",
         fr0"]) "
-      ) ++ fr0"WITH ORDINALITY AS ids(id, ord) ON ids.id = t.id WHERE deleted = false ORDER BY ord")
+      ) ++ fr0"""WITH ORDINALITY AS ids(id, ord) ON ids.id = t.id WHERE schema_version = ${schemaVersion} AND 
+      schema_version = ${schemaVersion} AND deleted = false ORDER BY ord""")
       .query[PostgresDocument[Id, Meta, Data]]
       .to[List]
 
-  def select[Id, Meta, Data](tableName: String)(using
+  def select[Id, Meta, Data](tableName: String, schemaVersion: Int)(using
     read: Read[PostgresDocument[Id, Meta, Data]]
   ) =
-    new Select[Id, Meta, Data](tableName, None, None, None, None)
+    new Select[Id, Meta, Data](tableName, schemaVersion, None, None, None, None)
 
   def selectUpdated[Id, Meta, Data](
     tableName: String,
+    schemaVersion: Int,
     from: Option[OffsetDateTime],
     to: Option[OffsetDateTime]
   )(implicit
@@ -258,15 +279,21 @@ object operations:
   ): Free[connection.ConnectionOp, List[
     PostgresDocument[Id, Meta, Data]
   ]] =
-    (fr0"SELECT ${frPGDocStar} FROM ${Fragment
+    (fr0"""SELECT ${frPGDocStar} FROM ${Fragment
       .const(tableName)} WHERE ${from
       .map(f => fr0"last_updated >= ${f}")
-      .getOrElse(fr0"true")} AND ${to.map(t => fr0"last_updated < ${t}").getOrElse(fr0"true")}")
+      .getOrElse(fr0"true")} AND 
+      ${to
+      .map(t =>
+        fr0"""last_updated < ${t} AND deleted = false AND schema_version = ${schemaVersion}"""
+      )
+      .getOrElse(fr0"true")}""")
       .query[PostgresDocument[Id, Meta, Data]]
       .to[List]
 
   class Select[Id, Meta, Data](
     val tableName: String,
+    val schemaVersion: Int,
     val filter: Option[Fragment],
     val orderBy: Option[Fragment],
     val from: Option[Int],
@@ -275,6 +302,7 @@ object operations:
     def where(filter: Filter | FilterPredicate) =
       new Select(
         tableName,
+        schemaVersion,
         Some(filter match
           case Filter(f)          => f
           case FilterPredicate(f) => f
@@ -285,10 +313,10 @@ object operations:
       )
 
     def orderBy(fragment: Fragment) =
-      new Select(tableName, filter, Some(fragment), from, to)
+      new Select(tableName, schemaVersion, filter, Some(fragment), from, to)
 
     def limit(from: Option[Int], to: Option[Int]) =
-      new Select(tableName, filter, orderBy, from, to)
+      new Select(tableName, schemaVersion, filter, orderBy, from, to)
 
     def transact[M[_]: MonadCancelThrow](
       txn: Transactor[M]
@@ -309,11 +337,13 @@ object operations:
           fr0"OFFSET ${f}"
         )} ${to.fold(fr0"")(t => fr0"LIMIT ${t - from.getOrElse(0)}")}"
 
-      if count then fr0"""
+      if count then
+        fr0"""
         WITH cte AS (
           SELECT ${frPGDocStar}
           FROM ${Fragment.const(tableName)}
-          WHERE deleted = false ${filter.fold(fr0"")(x => fr0" AND ${x}")}
+          WHERE schema_version = ${schemaVersion} AND deleted = false ${filter
+          .fold(fr0"")(x => fr0" AND ${x}")}
         )
         SELECT *
         FROM  (
@@ -323,7 +353,7 @@ object operations:
         JOIN (SELECT count(*) FROM cte) c(full_count) ON true;
       """
       else
-        fr0"SELECT ${frPGDocStar} FROM ${Fragment.const(tableName)} where deleted = false ${filter
+        fr0"SELECT ${frPGDocStar} FROM ${Fragment.const(tableName)} where schema_version = ${schemaVersion} AND deleted = false ${filter
           .fold(fr0"")(x => fr0" AND ${x}")}${orderLimit}"
 
     def query =
@@ -346,6 +376,7 @@ object operations:
 
   case class Filter(fragment: Fragment)
   object Filter:
+    def not(f: Fragment) = Filter(fr0"NOT ${f}")
     def noop = Filter(fr0"true")
     def _false = Filter(fr0"false")
     def textFieldEquals(
@@ -409,7 +440,7 @@ object operations:
         .map(_ =>
       // format: off
       Filter(
-        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where 
+        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where
         jdoc ??| ${values})"""
       )).noop
       // format: on
@@ -423,9 +454,50 @@ object operations:
         .map(_ =>
       // format: off
       Filter(
-        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where 
+        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where
         ${Fragment.const(getObjectField("jdoc"))} ??| ${values})"""
       )).noop
+      // format: on
+
+    def jsonObjectArrayN2ContainsAnyValue(
+      getObjectArray1: String,
+      getObjectArray2: String => String,
+      getObjectField: String => String,
+      values: List[String],
+      arr1Nullable: Boolean = false
+    ) =
+      val query =
+        fr"""exists (select * from jsonb_array_elements(${Fragment.const(
+          getObjectArray1
+        )}) as r(jdoc) where exists
+          (select * from jsonb_array_elements(${Fragment.const(
+          getObjectArray2("jdoc")
+        )}) as r(jdoc2) where
+          ${Fragment.const(getObjectField("jdoc2"))} ??| ${values}))"""
+      values.toNel
+        .map(_ =>
+      // format: off
+      Filter(
+        if arr1Nullable then 
+          fr0"""
+          case ${Fragment.const(getObjectArray1)}
+	        when 'null' then false
+          else ${query}
+          end"""
+        else query
+      )).noop
+      // format: on
+
+    def jsonObjectArrayIEquals(
+      getObjectArray: String,
+      getObjectField: String => String,
+      value: String
+    ) =
+      // format: off
+      Filter(
+        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where
+        lower((${Fragment.const(getObjectField("jdoc"))})::text) = ${value.toLowerCase})"""
+      )
       // format: on
 
     def jsonObjectArrayILike(
@@ -435,7 +507,7 @@ object operations:
     ) =
       // format: off
       Filter(
-        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where 
+        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where
         ${Fragment.const(getObjectField("jdoc"))} ILIKE ${likeMatch})"""
       )
       // format: on
@@ -449,7 +521,7 @@ object operations:
     ) =
       // format: off
       Filter(
-        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where 
+        fr0"""exists (select * from jsonb_array_elements(${Fragment.const(getObjectArray)}) as r(jdoc) where
         ${Fragment.const(getObjectField1("jdoc"))} ILIKE ${likeMatch1} AND ${Fragment.const(getObjectField2("jdoc"))} ILIKE ${likeMatch2})"""
       )
       // format: on
@@ -457,7 +529,7 @@ object operations:
     def iLike(
       getField: String,
       likeMatch: String
-    ) = 
+    ) =
       // format: off
       Filter(fr0"""${Fragment.const(getField)} ILIKE ${likeMatch}""")
       // format: on

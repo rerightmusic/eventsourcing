@@ -70,6 +70,7 @@ class AggregatesJsonSpec extends AnyFlatSpec with Matchers:
       NotUpdated,
       NotUpdated,
       NotUpdated,
+      NotUpdated,
       NotUpdated
     )
 
@@ -81,11 +82,12 @@ class AggregatesJsonSpec extends AnyFlatSpec with Matchers:
         NotUpdated,
         NotUpdated,
         NotUpdated,
+        NotUpdated,
         NotUpdated
       )
     ))
 
-    s"""{"fieldB":null,"fieldC":[1,2],"fieldD":null,"fieldF":null}"""
+    s"""{"fieldB":null,"fieldC":[1,2],"fieldD":null,"fieldF":null,"fieldG":null}"""
       .fromJson[Record] shouldBe (Right(
       Record(
         NotUpdated,
@@ -93,6 +95,7 @@ class AggregatesJsonSpec extends AnyFlatSpec with Matchers:
         HasUpdated(NonEmptyList.of(1, 2)),
         HasUpdated(None),
         NotUpdated,
+        HasUpdated(None),
         HasUpdated(None)
       )
     ))
@@ -103,6 +106,7 @@ class AggregatesJsonSpec extends AnyFlatSpec with Matchers:
       HasUpdated(NonEmptyList.of(1, 2)),
       HasUpdated(None),
       NotUpdated,
+      HasUpdated(None),
       HasUpdated(None)
-    ).toJson shouldBe s"""{"fieldB":null,"fieldC":[1,2],"fieldD":null,"fieldF":null}"""
+    ).toJson shouldBe s"""{"fieldB":null,"fieldC":[1,2],"fieldD":null,"fieldF":null,"fieldG":null}"""
   }

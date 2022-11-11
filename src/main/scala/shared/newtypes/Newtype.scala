@@ -19,6 +19,7 @@ package shared.newtypes
 
 import scala.deriving.Mirror
 import scala.reflect.ClassTag
+import cats.kernel.Order
 
 /** $newtypeBaseDescription */
 abstract class Newtype[Src] extends CoreScalaDoc {
@@ -36,6 +37,9 @@ abstract class Newtype[Src] extends CoreScalaDoc {
 
   protected def typeName: String =
     getClass().getSimpleName().replaceFirst("[$]$", "")
+
+  given zioTag(using i: izumi.reflect.Tag[Type]): zio.Tag[Type] =
+    zio.Tag[Type](i)
 
   implicit val codec: NewExtractor.Aux[Type, Src] =
     new NewExtractor[Type] {
@@ -63,4 +67,11 @@ abstract class Newtype[Src] extends CoreScalaDoc {
       def to(value: Type) =
         ex.from(value)
     }
+
+  given newtypeOrder[A, B](using
+    ex: NewExtractor.Aux[A, B],
+    or: Order[A]
+  ): Order[B] =
+    Order.from((a, b) => or.compare(ex.to(a), ex.to(b)))
+
 }

@@ -4,13 +4,10 @@ import cats.data.NonEmptyList
 import eventsourcing.all.*
 import eventsourcing.test.domain as D
 import shared.data.all.{_, given}
-
-import shared.logging.all.Logging
+import shared.json.all.given
 import shared.postgres.all.{_, given}
 import shared.principals.PrincipalId
-import zio.*
-import zio.blocking.Blocking
-import zio.duration.durationInt
+import zio.{given, *}
 
 object PostgresAccountAnalyticsService:
   def live = PostgresAggregateViewService.fold[

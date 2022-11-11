@@ -11,5 +11,6 @@ case class Record(
   fieldC: UpdatedNel[Int],
   fieldD: UpdatedOpt[NonEmptyList[Int]],
   fieldE: Updated[List[String]],
-  fieldF: UpdatedOpt[List[String]]
+  fieldF: UpdatedOpt[List[String]],
+  fieldG: UpdatedOpt[Map[String, String]]
 ) derives JsonCodec

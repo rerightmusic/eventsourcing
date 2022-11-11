@@ -5,7 +5,6 @@ import zio.json.internal.*
 import zio.json.ast.*
 import shared.newtypes.NewExtractor
 import java.util.UUID
-import shared.macros.all.IsNewtype
 
 trait NewtypeInstances:
   given newtypeCodec[A, B](using

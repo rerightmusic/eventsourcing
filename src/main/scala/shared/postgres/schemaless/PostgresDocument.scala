@@ -15,6 +15,7 @@ case class PostgresDocument[Id, Meta, Data](
   createdBy: PrincipalId,
   lastUpdatedBy: PrincipalId,
   data: Data,
+  schemaVersion: Int,
   deleted: Boolean,
   created: OffsetDateTime,
   lastUpdated: OffsetDateTime
@@ -35,13 +36,24 @@ object PostgresDocument:
         PrincipalId,
         PrincipalId,
         Json,
+        Int,
         Boolean,
         OffsetDateTime,
         OffsetDateTime
       )
     ]
       .map {
-        case (id, meta, crPrId, luPrId, data, deleted, created, lastUpdated) =>
+        case (
+              id,
+              meta,
+              crPrId,
+              luPrId,
+              data,
+              schemaVersion,
+              deleted,
+              created,
+              lastUpdated
+            ) =>
           PostgresDocument[Id, Meta, Data](
             ex.to(id),
             meta
@@ -64,6 +76,7 @@ object PostgresDocument:
                   ),
                 v => v
               ),
+            schemaVersion,
             deleted,
             created,
             lastUpdated
@@ -82,6 +95,7 @@ object PostgresDocument:
         PrincipalId,
         PrincipalId,
         Json,
+        Int,
         Boolean,
         OffsetDateTime,
         OffsetDateTime
@@ -94,6 +108,7 @@ object PostgresDocument:
               crPrId,
               luPrId,
               data,
+              schemaVersion,
               deleted,
               created,
               lastUpdated
@@ -104,6 +119,7 @@ object PostgresDocument:
             crPrId,
             luPrId,
             data.toJsonASTOrFail,
+            schemaVersion,
             deleted,
             created,
             lastUpdated

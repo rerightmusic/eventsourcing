@@ -8,7 +8,18 @@ object all:
   type OffsetDateTime = java.time.OffsetDateTime
 
   def now: UIO[OffsetDateTime] =
-    ZIO.effectTotal(OffsetDateTime.now(ZoneOffset.UTC))
+    ZIO.succeed(OffsetDateTime.now(ZoneOffset.UTC))
+
+  def nowMillis = now.map(n => n.toInstant.toEpochMilli)
+
+  def nowSync: OffsetDateTime = OffsetDateTime.now(ZoneOffset.UTC)
+
+  type LocalDate = java.time.LocalDate
+  object LocalDate:
+    def parse(str: String) =
+      java.time.LocalDate.parse(str)
+    def format(date: LocalDate) = date.format(DateTimeFormatter.ISO_DATE)
+    def nowSync = java.time.LocalDate.now
 
   def differenceString(start: OffsetDateTime, end: OffsetDateTime) =
     differenceToString(differenceMillis(start, end))

@@ -18,6 +18,7 @@
 package shared.newtypes
 
 import java.util.UUID
+
 /** Type-class.
   */
 trait NewExtractor[NewT] {

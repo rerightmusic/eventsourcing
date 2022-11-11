@@ -6,13 +6,13 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import scala.util.Properties
 import shared.data.all.*
-import shared.config.{all as Conf}
+import shared.config.{all as Conf, Env}
 import shared.postgres.all.{given, *}
 import shared.json.all.{given, *}
 import java.io.File
-import zio.{ZIO, ZEnv, Runtime, Has, Task}
+import zio.{ZIO, Runtime, Task}
 import zio.interop.catz.*
-import zio.blocking.Blocking
+
 import shared.logging.all.*
 import org.scalatest.BeforeAndAfterAll
 import java.util.UUID
@@ -45,6 +45,7 @@ class PostgresDoobieITest
         created_by      varchar(50),
         last_updated_by varchar(50),
         data            jsonb,
+        schema_version  integer not null,
         deleted         boolean,
         created         timestamp(6) with time zone,
         last_updated    timestamp(6) with time zone
@@ -93,6 +94,7 @@ class PostgresDoobieITest
         ExampleEnumTrait.EnumA,
         Some(uuid)
       ),
+      1,
       false,
       OffsetDateTime.now,
       OffsetDateTime.now
@@ -128,7 +130,7 @@ class PostgresDoobieITest
       )
     )
     val res = transact(txn =>
-      selectById[Id, Unit, ExampleDocumentData]("test.example", id).transact(
+      selectById[Id, Unit, ExampleDocumentData]("test.example", 1, id).transact(
         txn
       )
     )
@@ -154,7 +156,7 @@ class PostgresDoobieITest
     )
 
     val res = transact(txn =>
-      selectById[Id, Unit, ExampleDocumentData]("test.example", id).transact(
+      selectById[Id, Unit, ExampleDocumentData]("test.example", 1, id).transact(
         txn
       )
     )
@@ -171,7 +173,7 @@ class PostgresDoobieITest
 
     val res =
       transact(txn =>
-        selectById[Id, Unit, Json]("test.example", id).transact(txn)
+        selectById[Id, Unit, Json]("test.example", 1, id).transact(txn)
       )
 
     res.data shouldBe (Map(
@@ -198,7 +200,7 @@ class PostgresDoobieITest
   "jsonArrayContainsValue" should "work" in {
     val res =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonArrayContainsValue(
               "data->'nonEmptyList'",
@@ -215,7 +217,7 @@ class PostgresDoobieITest
 
     val res2 =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonArrayContainsValue(
               "data->'objectList'",
@@ -234,7 +236,7 @@ class PostgresDoobieITest
   "jsonArrayContainsAnyValue" should "work" in {
     val res =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonArrayContainsAnyValue(
               "data->'nonEmptyList'",
@@ -251,7 +253,7 @@ class PostgresDoobieITest
 
     val res2 =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonArrayContainsAnyValue(
               "data->'nonEmptyList'",
@@ -269,7 +271,7 @@ class PostgresDoobieITest
   "jsonValueInArray" should "work" in {
     val res =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonValueInArray(
               "data->>'name'",
@@ -286,7 +288,7 @@ class PostgresDoobieITest
 
     val res2 =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonValueInArray(
               "data->>'name'",
@@ -303,7 +305,7 @@ class PostgresDoobieITest
   "jsonObjectArrayContainsAnyValue" should "work" in {
     val res =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonObjectArrayContainsAnyValue(
               "data->'objectList'",
@@ -321,7 +323,7 @@ class PostgresDoobieITest
 
     val res2 =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.jsonObjectArrayContainsAnyValue(
               "data->'objectList'",
@@ -339,7 +341,7 @@ class PostgresDoobieITest
   "textFieldInArray" should "work" in {
     val res =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .where(
             Filter.textFieldInArray(
               "id",
@@ -355,7 +357,7 @@ class PostgresDoobieITest
     res.length shouldBe 2
 
     val res2 = transact(txn =>
-      select[Id, Unit, ExampleDocumentData]("test.example")
+      select[Id, Unit, ExampleDocumentData]("test.example", 1)
         .where(
           Filter.textFieldInArray(
             "id",
@@ -372,14 +374,14 @@ class PostgresDoobieITest
   "orderBy" should "work" in {
     val res1 =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .orderBy(fr0"created DESC")
           .transact(txn)
       )
 
     val res2 =
       transact(txn =>
-        select[Id, Unit, ExampleDocumentData]("test.example")
+        select[Id, Unit, ExampleDocumentData]("test.example", 1)
           .orderBy(fr0"created ASC")
           .transact(
             txn
@@ -403,6 +405,7 @@ class PostgresDoobieITest
       transact(txn =>
         selectUpdated[Id, Unit, ExampleDocumentData](
           "test.example",
+          1,
           None,
           Some(now)
         ).transact(
@@ -415,7 +418,7 @@ class PostgresDoobieITest
 
   "selectWhere complex" should "work" in {
     val res = transact(txn =>
-      select[Id, Unit, ExampleDocumentData]("test.example")
+      select[Id, Unit, ExampleDocumentData]("test.example", 1)
         .where(
           (Filter
             .iLike("data->>'name'", s"%${data1.name.substring(1, 5)}%")

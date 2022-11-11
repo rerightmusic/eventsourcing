@@ -53,7 +53,8 @@ object Profile:
       type EventData = ProfileEvent
       type Command = CreateProfile | UpdateFirstName | UpdateLastName
 
-      def storeName = "profiles"
+      val storeName = "profiles"
+      val schemaVersion = 1
 
       def aggregate = (x, ev) =>
         (x, ev.data) match

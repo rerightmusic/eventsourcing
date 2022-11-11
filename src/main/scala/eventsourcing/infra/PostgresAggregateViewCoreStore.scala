@@ -14,25 +14,18 @@ import cats.syntax.all.*
 import shared.postgres.all.{given, *}
 import zio.interop.catz.*
 import fs2.Chunk
-import zio.ZIO
-import zio.{ZEnv, Has}
+import zio.{ZIO, ZEnvironment}
 import zio.RIO
 import zio.ZLayer
 import shared.data.all.*
 import shared.newtypes.NewExtractor
 import java.util.UUID
-import zio.clock.Clock
-import zio.duration.durationInt
-import izumi.reflect.Tag
 import java.time.OffsetDateTime
-import zio.logging.Logger
 import doobie.util.transactor.Transactor
 import fs2.Stream
-import shared.logging.all.Logging
 import cats.arrow.FunctionK
 import zio.Schedule
 import shared.time.all.*
-import zio.duration.*
 import shared.health.NodeHealthCheck
 import shared.health.Healthy
 import shared.health.LeafHealthCheck
@@ -41,6 +34,7 @@ import cats.free.Free
 import scala.concurrent.duration.*
 import zio.interop.catz.implicits.*
 import org.postgresql.util.PSQLException
+import zio.*
 
 trait PostgresAggregateViewCoreStore[
   Name <: String,
@@ -49,11 +43,11 @@ trait PostgresAggregateViewCoreStore[
   Aggregates <: NonEmptyTuple,
   AggsId
 ](
-  schema: String,
+  val schema: String,
   val aggs: AggregateViewStores.Aux[Aggregates, ?, AggsId],
-  env: Has[WithTransactor[Name]] & aggs.Stores & Clock & Logging,
-  catchUpTimeout: zio.duration.Duration
-)(using tName: Tag[Name], view: AggregateView[View]):
+  val env: ZEnvironment[WithTransactor[Name] & aggs.Stores],
+  val catchUpTimeout: zio.Duration
+)(using view: AggregateView[View], tName: zio.Tag[Name]):
   val tableName = schema + "." + camelToUnderscores(view.storeName)
   val aggViewsTableName = schema + "." + "aggregate_views"
 
@@ -66,7 +60,8 @@ trait PostgresAggregateViewCoreStore[
       .streamEventsFrom(query.flatMap(queryToIds), status)
       .translate(
         new FunctionK[RIO[aggs.Stores, *], Task]:
-          def apply[A](x: RIO[aggs.Stores, A]) = x.provide(env)
+          def apply[A](x: RIO[aggs.Stores, A]) =
+            x.provideEnvironment(env)
       )
 
   def subscribeEventStream
@@ -105,6 +100,14 @@ trait PostgresAggregateViewCoreStore[
       )
       .absolve
 
+  def readAggregateViewsM: ConnectionIO[Either[Throwable, List[View]]]
+  def readAggregateViews =
+    readAggregateViewsM
+      .transact(
+        env.get[WithTransactor[Name]].transactor
+      )
+      .absolve
+
   def mergeAggregateViewStatusM(
     currTime: OffsetDateTime,
     status: D.AggregateViewStatus
@@ -116,7 +119,7 @@ trait PostgresAggregateViewCoreStore[
     ) ++ status.sequenceIds
     _ <- (sql"""INSERT INTO ${Fragment.const(
       aggViewsTableName
-    )} (name, status, last_updated) VALUES (${view.storeName}, ${status
+    )} (name, status, last_updated) VALUES (${view.versionedStoreName}, ${status
       .copy(
         sequenceIds = newSequenceIds,
         longestDuration = List(
@@ -167,7 +170,7 @@ trait PostgresAggregateViewCoreStore[
     )} IN row exclusive mode""".update.run
     _ <- sql"""SELECT 1 FROM ${Fragment.const(
       aggViewsTableName
-    )} WHERE name = ${view.storeName} FOR UPDATE""".query[Int].option
+    )} WHERE name = ${view.versionedStoreName} FOR UPDATE""".query[Int].option
   yield ()
 
   def persistAggregateViewM(data: View): ConnectionIO[Unit]
@@ -194,11 +197,9 @@ trait PostgresAggregateViewCoreStore[
     yield res).transact(env.get[WithTransactor[Name]].transactor)
     _ <-
       if !res then
-        env
-          .get[Logger[String]]
-          .info(
-            s"Optimistic Concurrency: Failed to persist aggregate view ${view.storeName}"
-          )
+        ZIO.logInfo(
+          s"Optimistic Concurrency: Failed to persist aggregate view ${view.versionedStoreName}"
+        )
       else ZIO.unit
   yield ()
 
@@ -206,14 +207,16 @@ trait PostgresAggregateViewCoreStore[
     _ <- lockTablesM
     _ <- sql"""DELETE from ${Fragment.const(
       aggViewsTableName
-    )} WHERE name = ${view.storeName}""".update.run
-    _ <- sql"""TRUNCATE ${Fragment.const(tableName)}""".update.run
+    )} WHERE name = ${view.versionedStoreName}""".update.run
+    _ <- sql"""DELETE FROM ${Fragment.const(
+      tableName
+    )} WHERE schema_version = ${view.schemaVersion}""".update.run
   yield ()).transact(env.get[WithTransactor[Name]].transactor).unit
 
   def readAggregateViewStatusM =
     sql"""SELECT status, last_updated from ${Fragment.const(
       aggViewsTableName
-    )} where name = ${view.storeName}"""
+    )} where name = ${view.versionedStoreName}"""
       .query[(Json, OffsetDateTime)]
       .option
       .map(
@@ -254,7 +257,7 @@ trait PostgresAggregateViewCoreStore[
       ),
     status,
     seqIds
-  )).provide(env)
+  )).provideEnvironment(env)
 
   def isCaughtUp = isReady.map(_._1)
 
@@ -263,13 +266,14 @@ trait PostgresAggregateViewCoreStore[
     failMessage: Option[String] = None
   ): ZIO[R, E | Throwable, A] =
     for
-      (_, ready) <- isReady
+      res <- isReady
         .repeat(
           (Schedule.spaced(1.second) >>> Schedule.elapsed)
             .whileOutput(_ < catchUpTimeout) && Schedule
             .recurUntil(s => s._1)
         )
-        .provide(env)
+        .provideEnvironment(env)
+      (_, ready) = res
       _ <-
         if !ready._1 then
           val stackErs =
@@ -289,7 +293,7 @@ ${stackErs}"""
 
   def health =
     NodeHealthCheck(
-      s"AggregateView ${view.storeName}",
+      s"AggregateView ${view.versionedStoreName}",
       List(
         LeafHealthCheck(
           "Info",

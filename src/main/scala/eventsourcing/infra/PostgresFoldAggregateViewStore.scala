@@ -16,23 +16,17 @@ import shared.postgres.all.{given, *}
 import zio.interop.catz.*
 import fs2.Chunk
 import zio.ZIO
-import zio.{ZEnv, Has}
 import zio.RIO
 import zio.ZLayer
 import shared.data.all.*
 import shared.postgres.all.{*, given}
 import shared.newtypes.NewExtractor
 import java.util.UUID
-import zio.clock.Clock
-import zio.duration.durationInt
-import izumi.reflect.Tag
 import java.time.OffsetDateTime
-import zio.logging.Logger
 import fs2.Stream
-import shared.logging.all.Logging
 import cats.arrow.FunctionK
 import eventsourcing.domain.AggregateViewClass
-import zio.duration.Duration
+import zio.Duration
 
 trait PostgresFoldAggregateViewStore:
   def fold[
@@ -43,27 +37,32 @@ trait PostgresFoldAggregateViewStore:
     aggView: AggregateViewClass[DomView],
     aggViewIns: AggregateView.Fold[DomView, aggView.Aggregates],
     aggs: AggregateViewStores[aggView.Aggregates],
-    tAggs: Tag[aggView.Aggregates],
     cd: JsonCodec[View],
-    tName: Tag[Name],
-    tDomView: Tag[DomView],
-    tt: Tag[AggregateViewStore.Service[DomView, Unit, aggView.Aggregates]]
+    tDomView: zio.Tag[DomView],
+    tName: zio.Tag[Name],
+    tStore: zio.Tag[AggregateViewStore.Fold[DomView, aggView.Aggregates]]
   )(
     fromView: (ev: View) => Either[Throwable, DomView],
     toView: (ev: DomView) => View,
     schema: String,
     catchUpTimeout: Duration
-  ) = ZLayer.fromFunction[
-    Has[WithTransactor[Name]] & Logging & aggs.Stores & Clock,
-    AggregateViewStore.Service[DomView, Unit, aggView.Aggregates]
-  ](env =>
-    new AggregateViewStore.Service[DomView, Unit, aggView.Aggregates]
+  ): ZLayer[WithTransactor[Name] & aggs.Stores, Throwable, AggregateViewStore[
+    DomView,
+    Unit,
+    aggView.Aggregates
+  ]] = ZLayer.fromZIO[
+    WithTransactor[Name] & aggs.Stores,
+    Throwable,
+    AggregateViewStore.Fold[DomView, aggView.Aggregates]
+  ](
+    for env <- ZIO.environment[WithTransactor[Name] & aggs.Stores]
+    yield new AggregateViewStore[DomView, Unit, aggView.Aggregates]
       with PostgresAggregateViewCoreStore[
         Name,
         DomView,
         Unit,
         aggView.Aggregates,
-        aggs.AggsId
+        aggs.AggsId,
       ](
         schema,
         aggs,
@@ -75,11 +74,18 @@ trait PostgresFoldAggregateViewStore:
 
       def countAggregateViewM =
         sql"""SELECT count(*) from ${Fragment
-          .const(tableName)}""".query[Int].option.map(_.getOrElse(0))
+          .const(
+            tableName
+          )} where schema_version = ${aggView.instance.schemaVersion}"""
+          .query[Int]
+          .option
+          .map(_.getOrElse(0))
 
       def readAggregateViewM(query: Option[Unit]) =
         sql"""select data from ${Fragment
-          .const(tableName)}"""
+          .const(
+            tableName
+          )} where schema_version = ${aggView.instance.schemaVersion}"""
           .query[Json]
           .option
           .map(
@@ -96,14 +102,17 @@ trait PostgresFoldAggregateViewStore:
             )
           )
 
+      def readAggregateViewsM =
+        readAggregateViewM(None).map(_.map(_.toList))
+
       def persistAggregateViewM(
         view: DomView
       ) =
         (sql"""INSERT INTO ${Fragment.const(
           tableName
-        )} (name, data) VALUES (${aggViewIns.storeName}, ${toView(
+        )} (schema_version, data) VALUES (${aggView.instance.schemaVersion}, ${toView(
           view
         ).toJsonASTOrFail}) """ ++
-          sql"""ON CONFLICT (name) DO UPDATE SET data = EXCLUDED.data""").update.run
+          sql"""ON CONFLICT (schema_version) DO UPDATE SET data = EXCLUDED.data""").update.run
           .map(_ => ())
   )

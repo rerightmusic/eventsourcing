@@ -45,7 +45,8 @@ object Account:
       type EventData = AccountEvent
       type Command = CreateAccount | UpdateEmail | UpdatePassword
 
-      def storeName = "accounts"
+      val storeName = "accounts"
+      val schemaVersion = 1
       def aggregate = (x, ev) =>
         (x, ev.data) match
           case (

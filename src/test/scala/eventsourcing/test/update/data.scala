@@ -16,6 +16,7 @@ case class AggregateData(
   optId: Option[X],
   optList: Option[List[Int]],
   optNel: Option[NonEmptyList[Int]],
+  optMap: Option[Map[String, String]],
   obj: Option[InnerObj],
   sum: Option[InnerSum],
   sum2: InnerSum
@@ -36,6 +37,7 @@ val aggregate = AggregateData(
   Some(X(UUID.randomUUID)),
   Some(List(1)),
   Some(NonEmptyList.of(1)),
+  Some(Map("1" -> "1")),
   Some(InnerObj(1, Some("1"))),
   Some(InnerSum.InnerB),
   InnerSum.InnerA(1, "2")
@@ -50,6 +52,7 @@ case class AggregateDataDyn(
   optId: Option[X],
   optList: List[Int],
   optNel: Option[NonEmptyList[Int]],
+  optMap: Option[Map[String, String]],
   obj: Option[InnerObj]
 )
 
@@ -62,6 +65,7 @@ val aggregateDyn = AggregateDataDyn(
   Some(X(UUID.randomUUID)),
   List(4),
   Some(NonEmptyList.of(5)),
+  Some(Map("5" -> "5")),
   Some(InnerObj(3, Some("3")))
 )
 
@@ -74,6 +78,7 @@ case class AggregateUpdate(
   optId: Option[X],
   optList: Option[List[Int]],
   optNel: Option[NonEmptyList[Int]],
+  optMap: Option[Map[String, String]],
   obj: Option[InnerObj],
   sum: Option[InnerSum],
   sum2: InnerSum
@@ -88,6 +93,7 @@ val aggregateUpdate = AggregateUpdate(
   Some(X(UUID.randomUUID)),
   Some(List(3)),
   Some(NonEmptyList.of(8)),
+  Some(Map("1" -> "2")),
   Some(InnerObj(2, Some("2"))),
   Some(InnerSum.InnerB),
   InnerSum.InnerB
@@ -102,6 +108,7 @@ case class AggregateUpdatedEvent(
   optId: UpdatedOpt[X],
   optList: UpdatedOpt[List[Int]],
   optNel: UpdatedOpt[NonEmptyList[Int]],
+  optMap: UpdatedOpt[Map[String, String]],
   obj: UpdatedOpt[InnerObjUpdated],
   sum: UpdatedOpt[InnerSumEvent],
   sum2: Updated[InnerSumEvent]

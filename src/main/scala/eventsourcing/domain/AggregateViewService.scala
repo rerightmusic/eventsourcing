@@ -2,74 +2,81 @@ package eventsourcing.domain
 
 import cats.data.NonEmptyList
 import types.*
-import izumi.reflect.Tag
 import cats.syntax.all.*
 import zio.ZIO
 import shared.newtypes.NewExtractor
 import shared.principals.PrincipalId
-import zio.clock.Clock
-import zio.blocking.Blocking
 import java.util.UUID
-import zio.Has
 import zio.Task
-import zio.{ZLayer, ZEnv}
-import shared.logging.all.Logging
+import zio.ZLayer
 import zio.RIO
+trait AggregateViewService[View]:
+  type ActualView
+  type Query
+  type Aggregates <: NonEmptyTuple
 
-type AggregateViewService[View] = Has[AggregateViewService.Service[View]]
+  def store[R, E, A](
+    f: AggregateViewStore[ActualView, Query, Aggregates] => ZIO[
+      R,
+      E,
+      A
+    ]
+  ): ZIO[R, E, A]
+
+  def withCaughtUp[R, E, A](
+    f: => ZIO[R, E, A],
+    failMessage: Option[String] = None
+  ) = store(_.withCaughtUp(f, failMessage))
+
+  def isCaughtUp: Task[Boolean] = store(_.isCaughtUp)
+
+  def run(
+    mode: AggregateViewMode,
+    subscribe: Boolean
+  ): Task[Unit]
+
+  def get(query: Option[Query]): Task[Option[ActualView]]
+
 object AggregateViewService:
-  trait Service[View]:
-    type ActualView
-    type Query
-    type Aggregates <: NonEmptyTuple
-
-    def store[R, E, A](
-      f: AggregateViewStore.Service[ActualView, Query, Aggregates] => ZIO[
-        R,
-        E,
-        A
-      ]
-    ): ZIO[R, E, A]
-
-    def withCaughtUp[R, E, A](
-      f: => ZIO[R, E, A],
-      failMessage: Option[String] = None
-    ) = store(_.withCaughtUp(f, failMessage))
-
-    def isCaughtUp: Task[Boolean] = store(_.isCaughtUp)
-
-    def run(
-      mode: AggregateViewMode,
-      subscribe: Boolean
-    ): Task[Unit]
-
-    def get(query: Option[Query]): Task[Option[ActualView]]
+  type Aux[View, ActualView_, Query_, Aggregates_] =
+    AggregateViewService[View] {
+      type ActualView = ActualView_
+      type Query = Query_
+      type Aggregates = Aggregates_
+    }
 
   def live[View, ActualView_, Query_, Aggregates_ <: NonEmptyTuple](using
     view: AggregateViewClass.Aux[View, ActualView_, Query_, Aggregates_],
     viewIns: AggregateView.Aux[ActualView_, Query_, Aggregates_],
-    t: Tag[Query_],
-    t1: Tag[ActualView_],
-    t2: Tag[Aggregates_],
-    t3: Tag[View],
-    t4: Tag[AggregateViewStore.Service[
+    tActualView: zio.Tag[ActualView_],
+    tView: zio.Tag[View],
+    tQuery: zio.Tag[Query_],
+    tAggs: zio.Tag[Aggregates_],
+    tViewSvc: zio.Tag[AggregateViewService[View]],
+    tViewStore: zio.Tag[AggregateViewStore[ActualView_, Query_, Aggregates_]]
+  ): ZLayer[
+    AggregateViewStore[ActualView_, Query_, Aggregates_],
+    Throwable,
+    AggregateViewService[View]
+  ] =
+    ZLayer.fromZIO[AggregateViewStore[
       ActualView_,
       Query_,
       Aggregates_
-    ]]
-  ) =
-    ZLayer.fromFunction[AggregateViewStore[
-      ActualView_,
-      Query_,
-      Aggregates_
-    ] & ZEnv & Logging, Service[View]](env =>
-      new Service[View]:
+    ], Throwable, AggregateViewService[View]](
+      for
+        env <- ZIO.environment[AggregateViewStore[
+          ActualView_,
+          Query_,
+          Aggregates_
+        ]]
+      yield new AggregateViewService[View]:
         type ActualView = ActualView_
         type Query = Query_
         type Aggregates = Aggregates_
 
         def store[R, E, A](
-          f: AggregateViewStore.Service[ActualView, Query, Aggregates] => ZIO[
+          f: AggregateViewStore[ActualView, Query, Aggregates] => ZIO[
             R,
             E,
             A
@@ -81,7 +88,7 @@ object AggregateViewService:
             .getAggregateView[ActualView_, Query_, Aggregates_](
               query
             )
-            .provide(env)
+            .provideEnvironment(env)
 
         def run(mode: AggregateViewMode, subscribe: Boolean) =
           operations
@@ -89,63 +96,63 @@ object AggregateViewService:
               mode,
               subscribe
             )
-            .provide(env)
+            .provideEnvironment(env)
     )
 
   def apply[View](using
     view: AggregateViewClass[View],
-    t: Tag[
-      AggregateViewService.Service[View] {
-        type ActualView = view.ActualView
-        type Query = view.Query
-        type Aggregates = view.Aggregates
-      }
+    tSvc: zio.Tag[
+      AggregateViewService.Aux[
+        View,
+        view.ActualView,
+        view.Query,
+        view.Aggregates
+      ]
     ],
-    tw: Tag[
-      AggregateViewStore.Service[view.ActualView, view.Query, view.Aggregates]
+    tStore: zio.Tag[
+      AggregateViewStore[view.ActualView, view.Query, view.Aggregates]
     ]
   ) = ServiceOps[View, view.ActualView, view.Query, view.Aggregates]
 
   class ServiceOps[View, ActualView_, Query_, Aggregates_ <: NonEmptyTuple](
     using
-    Tag[
-      AggregateViewService.Service[View] {
-        type ActualView = ActualView_
-        type Query = Query_
-        type Aggregates = Aggregates_
-      }
+    tSvc: zio.Tag[
+      AggregateViewService.Aux[
+        View,
+        ActualView_,
+        Query_,
+        Aggregates_
+      ]
     ],
-    Tag[AggregateViewStore.Service[ActualView_, Query_, Aggregates_]]
+    tStore: zio.Tag[AggregateViewStore[ActualView_, Query_, Aggregates_]]
   ):
     def store[R, E, A](
-      f: AggregateViewStore.Service[ActualView_, Query_, Aggregates_] => ZIO[
+      f: AggregateViewStore[ActualView_, Query_, Aggregates_] => ZIO[
         R,
         E,
         A
       ]
     ) =
       ZIO
-        .accessM[Has[
-          AggregateViewService.Service[View] {
-            type ActualView = ActualView_
-            type Query = Query_
-            type Aggregates = Aggregates_
-          }
-        ] & R](_.get.store(f))
+        .environmentWithZIO[
+          AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_] & R
+        ](
+          _.get[
+            AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_]
+          ].store(f)
+        )
         .asInstanceOf[ZIO[AggregateViewService[View] & R, E, A]]
 
     def run(
       mode: AggregateViewMode,
       subscribe: Boolean
     ): ZIO[AggregateViewService[View], Throwable, Unit] = ZIO
-      .accessM[Has[
-        AggregateViewService.Service[View] {
-          type ActualView = ActualView_
-          type Query = Query_
-          type Aggregates = Aggregates_
-        }
-      ]](
-        _.get.run(mode, subscribe)
+      .environmentWithZIO[
+        AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_]
+      ](
+        _.get[
+          AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_]
+        ].run(mode, subscribe)
       )
       .asInstanceOf[ZIO[AggregateViewService[View], Throwable, Unit]]
 
@@ -153,13 +160,9 @@ object AggregateViewService:
       View
     ], Throwable, Option[ActualView_]] =
       ZIO
-        .accessM[Has[
-          AggregateViewService.Service[View] {
-            type ActualView = ActualView_
-            type Query = Query_
-            type Aggregates = Aggregates_
-          }
-        ]](
+        .environmentWithZIO[
+          AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_]
+        ](
           _.get.get(query)
         )
         .asInstanceOf[ZIO[AggregateViewService[View], Throwable, Option[
@@ -171,22 +174,18 @@ object AggregateViewService:
       failMessage: Option[String] = None
     ) =
       ZIO
-        .accessM[Has[
-          AggregateViewService.Service[View] {
-            type ActualView = ActualView_
-            type Query = Query_
-            type Aggregates = Aggregates_
-          }
-        ] & R](_.get.withCaughtUp(f))
+        .environmentWithZIO[
+          AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_] & R
+        ](
+          _.get[
+            AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_]
+          ].withCaughtUp(f)
+        )
         .asInstanceOf[ZIO[AggregateViewService[View] & R, E | Throwable, A]]
 
     def isCaughtUp =
       ZIO
-        .accessM[Has[
-          AggregateViewService.Service[View] {
-            type ActualView = ActualView_
-            type Query = Query_
-            type Aggregates = Aggregates_
-          }
-        ]](_.get.store(_.isCaughtUp))
+        .environmentWithZIO[
+          AggregateViewService.Aux[View, ActualView_, Query_, Aggregates_]
+        ](_.get.store(_.isCaughtUp))
         .asInstanceOf[RIO[AggregateViewService[View], Boolean]]

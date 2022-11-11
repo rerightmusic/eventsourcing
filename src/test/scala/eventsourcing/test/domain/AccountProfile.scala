@@ -12,7 +12,6 @@ import shared.postgres.all.{given, *}
 import zio.interop.catz.*
 import fs2.Chunk
 import zio.ZIO
-import zio.{ZEnv, Has}
 import zio.RIO
 import shared.uuid.all.*
 import shared.json.all.*
@@ -44,6 +43,7 @@ object AccountProfile:
       Account *: Profile *: EmptyTuple
     ](
       "account_profiles",
+      1,
       evs =>
         evs.map(
           _.on[Account](ev => AccountProfileId(Left(ev.id)))
@@ -78,7 +78,7 @@ object AccountProfile:
                   created = ev.created,
                   lastUpdated = ev.created,
                   data =
-                    AccountProfile(Some(ev.id), None, None, None, None, None)
+                    AccountProfile(Some(ev.id), None, None, None, None, None),
                 )
               )
             val newState = ev.data match
@@ -125,7 +125,7 @@ object AccountProfile:
                   created = ev.created,
                   lastUpdated = ev.created,
                   data =
-                    AccountProfile(None, Some(ev.id), None, None, None, None)
+                    AccountProfile(None, Some(ev.id), None, None, None, None),
                 )
               )
             val newState = ev.data match

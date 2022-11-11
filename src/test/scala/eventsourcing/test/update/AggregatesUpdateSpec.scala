@@ -23,6 +23,7 @@ class AggregatesUpdateSpec extends AnyFlatSpec with Matchers {
           HasUpdated(Some(id2)),
           HasUpdated(Some(List(10))),
           HasUpdated(None),
+          HasUpdated(None),
           HasUpdated(
             Some(InnerObjUpdated(HasUpdated(10), HasUpdated(Some("20"))))
           ),
@@ -39,6 +40,7 @@ class AggregatesUpdateSpec extends AnyFlatSpec with Matchers {
       None,
       Some(id2),
       Some(List(10)),
+      None,
       None,
       Some(InnerObj(10, Some("20"))),
       Some(InnerSum.InnerA(10, "30")),
@@ -59,6 +61,7 @@ class AggregatesUpdateSpec extends AnyFlatSpec with Matchers {
           HasUpdated(Some(id2)),
           HasUpdated(Some(List(1))),
           HasUpdated(Some(NonEmptyList.of(1))),
+          HasUpdated(None),
           HasUpdated(
             Some(InnerObjUpdated(HasUpdated(20), HasUpdated(Some("20"))))
           ),
@@ -76,6 +79,7 @@ class AggregatesUpdateSpec extends AnyFlatSpec with Matchers {
       Some(id2),
       List(1),
       Some(NonEmptyList.of(1)),
+      None,
       Some(InnerObj(20, Some("20")))
     )
   }
@@ -106,6 +110,9 @@ class AggregatesUpdateSpec extends AnyFlatSpec with Matchers {
       else NotUpdated,
       if aggregateUpdate.optNel != aggregate.optNel then
         HasUpdated(aggregateUpdate.optNel)
+      else NotUpdated,
+      if aggregateUpdate.optMap != aggregate.optMap then
+        HasUpdated(aggregateUpdate.optMap)
       else NotUpdated,
       if aggregateUpdate.obj != aggregate.obj then
         aggregateUpdate.obj match

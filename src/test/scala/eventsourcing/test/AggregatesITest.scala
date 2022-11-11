@@ -7,25 +7,25 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.BeforeAndAfterAll
 import eventsourcing.all.*
-import zio.{ZIO, ZEnv, Runtime, Has, Task}
+import zio.{ZIO, Runtime, Task}
 import zio.interop.catz.*
 import cats.syntax.all.*
-import zio.blocking.Blocking
 import shared.uuid.all.*
 import cats.data.NonEmptyList
-import zio.clock.Clock
-import zio.duration.durationInt
 import zio.Ref
 import shared.principals.PrincipalId
 import zio.Fiber
 import zio.Schedule
-import zio.duration.DurationOps
+import zio.durationInt
 import shared.postgres.all.given
+import sttp.client3.httpclient.zio.HttpClientZioBackend
+import sttp.client3.*
+import scala.concurrent.duration.*
 
 class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
 
   val RunBeforeAll = true
-  val RunAfterAll = true
+  val RunAfterAll = false
 
   override def beforeAll() = if !RunBeforeAll then ()
   else
@@ -44,10 +44,11 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
           created_by      varchar(50) not null,
           created         timestamp(6) with time zone not null,
           version         integer not null,
+          schema_version  integer not null,
           deleted         boolean not null,
           data            jsonb not null,
 
-          UNIQUE (id, version, deleted)
+          UNIQUE (id, version, schema_version, deleted)
         );
 
         CREATE INDEX ON test.accounts(id);
@@ -55,14 +56,17 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         CREATE INDEX ON test.accounts(created);
 
         CREATE TABLE test.accounts_view (
-          id              uuid primary key not null,
+          id              uuid not null,
           meta            jsonb not null,
           created_by      varchar(50) not null,
           last_updated_by varchar(50) not null,
           data            jsonb not null,
+          schema_version  integer not null,
           deleted         boolean not null,
           created         timestamp(6) with time zone not null,
-          last_updated    timestamp(6) with time zone not null
+          last_updated    timestamp(6) with time zone not null,
+
+          UNIQUE (id, schema_version)
         );
 
         CREATE INDEX ON test.accounts_view(created_by);
@@ -77,10 +81,11 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
           created_by      varchar(50) not null,
           created         timestamp(6) with time zone not null,
           version         integer not null,
+          schema_version  integer not null,
           deleted         boolean not null,
           data            jsonb not null,
 
-          UNIQUE (id, version, deleted)
+          UNIQUE (id, version, schema_version, deleted)
         );
 
         CREATE INDEX ON test.profiles(id);
@@ -88,14 +93,17 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         CREATE INDEX ON test.profiles(created);
 
         CREATE TABLE test.profiles_view (
-          id              uuid primary key not null,
+          id              uuid not null,
           meta            jsonb not null,
           created_by      varchar(50) not null,
           last_updated_by varchar(50) not null,
           data            jsonb not null,
+          schema_version  integer not null,
           deleted         boolean not null,
           created         timestamp(6) with time zone not null,
-          last_updated    timestamp(6) with time zone not null
+          last_updated    timestamp(6) with time zone not null,
+
+          UNIQUE (id, schema_version)
         );
 
         CREATE INDEX ON test.profiles_view(created_by);
@@ -104,32 +112,38 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         CREATE INDEX ON test.profiles_view(last_updated);
 
         CREATE TABLE test.account_details (
-          id              uuid primary key not null,
+          id              uuid not null,
           meta            jsonb not null,
           created_by      varchar(50) not null,
           last_updated_by varchar(50) not null,
           data            jsonb not null,
+          schema_version  integer not null,
           deleted         boolean not null,
           created         timestamp(6) with time zone not null,
-          last_updated    timestamp(6) with time zone not null
+          last_updated    timestamp(6) with time zone not null,
+
+          UNIQUE (id, schema_version)
         );
 
         CREATE TABLE test.account_profiles (
-          id              uuid primary key not null,
+          id              uuid not null,
           meta            jsonb not null,
           created_by      varchar(50) not null,
           last_updated_by varchar(50) not null,
           data            jsonb not null,
+          schema_version  integer not null,
           deleted         boolean not null,
           created         timestamp(6) with time zone not null,
-          last_updated    timestamp(6) with time zone not null
+          last_updated    timestamp(6) with time zone not null,
+
+          UNIQUE (id, schema_version)
         );
 
         CREATE INDEX ON test.account_profiles((data->>'accountId'));
         CREATE INDEX ON test.account_profiles((data->>'profileId'));
 
         CREATE TABLE test.account_analytics (
-          name            varchar(50) primary key not null,
+          schema_version  integer primary key not null,
           data            jsonb not null
         );
       """.update.run.transact(txn))
@@ -147,6 +161,36 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         sql"""DROP SCHEMA test cascade;""".update.run.transact(txn)
       )
     else ()
+
+  "http endpoints" should "work" in {
+    runSync(
+      for _ <- fork(HttpAggregateViews[Account *: EmptyTuple].run(7999, "localhost"))
+          _ <- ZIO.sleep(2.seconds)
+          res <- ZIO
+            .environmentWithZIO[SttpBackend[Task, Any]](
+              _.get.send(
+                basicRequest.get(uri"http://localhost:7999/health").readTimeout(5.seconds)
+              )
+            ).provideLayer(
+              HttpClientZioBackend.layer(options =
+                SttpBackendOptions(connectionTimeout = 1.minute, None)
+              )
+            )
+          _ <- zassert(withClue(res)(res.body shouldBe Symbol("Right")))
+          res2 <- ZIO
+            .environmentWithZIO[SttpBackend[Task, Any]](
+              _.get.send(
+                basicRequest.get(uri"http://localhost:7999/accounts_view_v1").readTimeout(5.seconds)
+              )
+            ).provideLayer(
+              HttpClientZioBackend.layer(options =
+                SttpBackendOptions(connectionTimeout = 1.minute, None)
+              )
+            )
+          _ <- zassert(withClue(res2)(res2.body shouldBe Symbol("Right")))
+      yield ()
+    )
+  }
 
   "persistEventsForId" should "work" in {
     val accId = AccountId(generateUUIDSync)
@@ -310,48 +354,50 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
   "Migrate aggregate" should "work" in {
     runSync(
       for
-        (id, lastEmail, lastPass, prevEmails, _) <- createAccounts(1).map(
+        res <- createAccounts(1).map(
           _.head
         )
 
-        acc <- Aggregate[AccountV2.Account].get(id)
+        (id, lastEmail, lastPass, prevEmails, _) = res
+
+        acc <- Aggregate[AccountBackwardsCompatible.Account].get(id)
         _ <- zassert(
-          acc shouldBe AccountV2.Account(id, lastEmail, prevEmails, None, None)
+          acc shouldBe AccountBackwardsCompatible.Account(id, lastEmail, prevEmails, None, None)
         )
 
         email = randomString
-        _ <- Aggregate[AccountV2.Account].update(
+        _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountV2.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
-          AccountV2.UpdateEmail(email, randomString)
+          AccountBackwardsCompatible.UpdateEmail(email, randomString)
         )
 
         email2 = randomString
         newEmailField2 = randomString
-        _ <- Aggregate[AccountV2.Account].update(
+        _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountV2.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
-          AccountV2.UpdateEmail(email2, newEmailField2)
+          AccountBackwardsCompatible.UpdateEmail(email2, newEmailField2)
         )
 
-        _ <- Aggregate[AccountV2.Account].update(
+        _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountV2.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
-          AccountV2.UpdatePassword(randomString)
+          AccountBackwardsCompatible.UpdatePassword(randomString)
         )
         newPassField = randomString
-        _ <- Aggregate[AccountV2.Account].update(
+        _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountV2.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
-          AccountV2.UpdatePassword(newPassField)
+          AccountBackwardsCompatible.UpdatePassword(newPassField)
         )
 
-        acc2 <- Aggregate[AccountV2.Account].get(id)
-        res2 = AccountV2.Account(
+        acc2 <- Aggregate[AccountBackwardsCompatible.Account].get(id)
+        res2 = AccountBackwardsCompatible.Account(
           id,
           email2,
           prevEmails ++ List(lastEmail, email),
@@ -546,10 +592,11 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
           created_by      varchar(50) not null,
           created         timestamp(6) with time zone not null,
           version         integer not null,
+          schema_version  integer not null,
           deleted         boolean not null,
           data            jsonb not null,
 
-          UNIQUE (id, version, deleted)
+          UNIQUE (id, version, schema_version, deleted)
         );
         """.update.run.transact(t))
       _ <- AggregateView[Account].store(_.resetAggregateView)
@@ -557,7 +604,7 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
       _ <- fork(AggregateView[Account].run(AggregateViewMode.Continue, true))
       _ <- fork(AggregateView[Account].run(AggregateViewMode.Continue, true))
       _ <- fork(AggregateView[Account].run(AggregateViewMode.Continue, true))
-      _ <- zio.clock.sleep(3.seconds)
+      _ <- ZIO.sleep(3.seconds)
       _ <- createAccounts(10)
       viewsSize <- AggregateView[Account].store(
         _.countAggregateViewWithCaughtUp
@@ -587,18 +634,18 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         sql"""ALTER TABLE test.accounts RENAME TO accounts2""".update.run
           .transact(t)
       )
-      _ <- zio.clock.sleep(2.seconds)
+      _ <- ZIO.sleep(2.seconds)
       _ <- transactM(t =>
         sql"""ALTER TABLE test.accounts2 RENAME TO accounts""".update.run
           .transact(t)
       )
       _ <- createAccountsAndProfiles(3)
-      _ <- zio.clock.sleep(2.seconds)
+      _ <- ZIO.sleep(2.seconds)
       _ <- transactM(t =>
         sql"""ALTER TABLE test.accounts RENAME TO accounts2""".update.run
           .transact(t)
       )
-      _ <- zio.clock.sleep(2.seconds)
+      _ <- ZIO.sleep(2.seconds)
       _ <- transactM(t =>
         sql"""ALTER TABLE test.accounts2 RENAME TO accounts""".update.run
           .transact(t)
@@ -716,7 +763,7 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
           .run(AggregateViewMode.Restart, true)
           .catchAll(logAndThrow)
       )
-      _ <- zio.clock.sleep(1.second)
+      _ <- ZIO.sleep(1.second)
       _ <- createAccountsAndProfiles(5)
       res2 <- createAccounts(1).map(_.head)
       q1 <-
@@ -778,7 +825,7 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
           .run(AggregateViewMode.Restart, true)
           .catchAll(logAndThrow)
       )
-      _ <- zio.clock.sleep(1.second)
+      _ <- ZIO.sleep(1.second)
       _ <- createAccountsAndProfiles(20)
       acc2 <- createAccounts(1).map(_.head)
       q1 <- AggregateView[AccountDetails].store(
@@ -856,7 +903,7 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
 
       lastSeqId <- Aggregate[Account].store(_.getLastSequenceId)
 
-      (lastSeq1, lastSeq2) <-
+      res <-
         for
           status1 <- AggregateView[AccountDetails].store(
             _.readAggregateViewStatus
@@ -869,6 +916,7 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
           status2.map(_.sequenceIds.head._2)
         )
 
+      (lastSeq1, lastSeq2) = res
       _ <- zassert(
         (lastSeq1, lastSeq2) shouldBe (Some(lastSeqId), Some(lastSeqId))
       )
@@ -885,7 +933,7 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
           .run(AggregateViewMode.Restart, true)
           .catchAll(logAndThrow)
       )
-      _ <- zio.clock.sleep(1.second)
+      _ <- ZIO.sleep(1.second)
       _ <- createAccountsAndProfiles(20)
       acc2 <- createAccounts(1).map(_.head)
       prf2 <- createProfiles(1).map(_.head)
@@ -953,10 +1001,83 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         )
 
       _ <- zassert(
-        lastSeqIds.flatMap(_.get("accounts")) shouldBe Some(accLastSeqId)
+        lastSeqIds.flatMap(_.get("accounts_v1")) shouldBe Some(accLastSeqId)
       )
       _ <- zassert(
-        lastSeqIds.flatMap(_.get("profiles")) shouldBe Some(prfLastSeqId)
+        lastSeqIds.flatMap(_.get("profiles_v1")) shouldBe Some(prfLastSeqId)
       )
+    yield ())
+  }
+
+  "migrate to new schema version" should "work" in {
+    runSync(for
+      acc1 <- createAccounts(5).map(
+        _.head
+      )
+      (id, lastEmail, lastPass, prevEmails, _) = acc1
+      _ <- fork(AggregateView[Account].run(AggregateViewMode.Restart, true))
+      _ <- fork(AggregateView[AccountBackwardsIncompatible.Account].run(AggregateViewMode.Restart, true))
+      _ <- fork(AggregateView[AggregateMigration[AccountBackwardsIncompatible.Account]].run(AggregateViewMode.Restart, true))
+      acc2 <- createAccounts(5).map(
+        _.head
+      )
+      (id2, lastEmail2, lastPass2, prevEmails2, _) = acc2
+
+      _ <- AggregateView[AggregateMigration[AccountBackwardsIncompatible.Account]].withCaughtUp(for
+        accRes <- Aggregate[AccountBackwardsIncompatible.Account].get(id)
+        _ <- zassert(
+          accRes shouldBe AccountBackwardsIncompatible.Account(id, NonEmptyList.of(lastEmail),lastPass, prevEmails)
+        )
+
+        acc2Res <- Aggregate[AccountBackwardsIncompatible.Account].get(id2)
+        _ <- zassert(
+          acc2Res shouldBe AccountBackwardsIncompatible.Account(id2, NonEmptyList.of(lastEmail2),lastPass2, prevEmails2)
+        )
+      yield())
+
+      email = randomString
+      email2 = randomString
+      _ <- Aggregate[AccountBackwardsIncompatible.Account].update(
+        id,
+        AccountMeta(randomString),
+        PrincipalId(randomString),
+        AccountBackwardsIncompatible.UpdateEmails(NonEmptyList.of(email, email2))
+      )
+
+      email3 = randomString
+      email4 = randomString
+      _ <- Aggregate[AccountBackwardsIncompatible.Account].update(
+        id,
+        AccountMeta(randomString),
+        PrincipalId(randomString),
+        AccountBackwardsIncompatible.UpdateEmails(NonEmptyList.of(email3, email4))
+      )
+
+      acc2 <- Aggregate[AccountBackwardsIncompatible.Account].get(id)
+      res2 = AccountBackwardsIncompatible.Account(
+        id,
+        NonEmptyList.of(email3, email4),
+        lastPass,
+        prevEmails ++ List(lastEmail, email, email2),
+      )
+      _ <- zassert(acc2 shouldBe res2)
+
+      accIds <- AggregateView[Account].withCaughtUp(
+       AggregateView[Account]
+        .store(_.readAggregateViews)
+        .map(
+          _.flatMap(_.keys.toList)
+        )
+      )
+
+      accIds2 <- AggregateView[AccountBackwardsIncompatible.Account].withCaughtUp(
+       AggregateView[AccountBackwardsIncompatible.Account]
+        .store(_.readAggregateViews)
+        .map(
+          _.flatMap(_.keys.toList)
+        )
+      )
+
+      _ <- zassert(accIds shouldBe accIds2)
     yield ())
   }

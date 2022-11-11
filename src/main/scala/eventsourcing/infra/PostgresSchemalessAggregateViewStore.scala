@@ -15,24 +15,18 @@ import cats.syntax.all.*
 import zio.interop.catz.*
 import fs2.Chunk
 import zio.ZIO
-import zio.{ZEnv, Has}
 import zio.RIO
 import zio.ZLayer
 import shared.data.all.*
 import shared.postgres.all.{*, given}
 import shared.newtypes.NewExtractor
 import java.util.UUID
-import zio.clock.Clock
-import zio.duration.durationInt
-import izumi.reflect.Tag
 import java.time.OffsetDateTime
-import zio.logging.Logger
 import fs2.Stream
-import shared.logging.all.Logging
 import cats.arrow.FunctionK
 import eventsourcing.domain.AggregateViewClass
 import eventsourcing.domain.generics.Unwrap
-import zio.duration.Duration
+import zio.Duration
 
 trait PostgresSchemalessAggregateViewStore:
   def schemaless[
@@ -59,10 +53,11 @@ trait PostgresSchemalessAggregateViewStore:
     ],
     cdMeta: JsonCodec[Meta],
     cd: JsonCodec[Data],
-    tName: Tag[Name],
-    tMeta: Tag[DomMeta],
-    tData: Tag[DomData],
-    tt: Tag[AggregateViewStore.SchemalessService[
+    tMap: zio.Tag[
+      Map[unId.Wrapped, D.Schemaless[unId.Wrapped, DomMeta, DomData]]
+    ],
+    tName: zio.Tag[Name],
+    tStore: zio.Tag[AggregateViewStore.Schemaless[
       unId.Wrapped,
       DomMeta,
       DomData,
@@ -84,33 +79,40 @@ trait PostgresSchemalessAggregateViewStore:
     queryIdToIds: (id: unQId.Wrapped) => aggs.AggsId,
     schema: String,
     catchUpTimeout: Duration
-  ) =
-    type Id = unId.Wrapped
-    type QueryId = unQId.Wrapped
-    type Aggregates = aggView.Aggregates
+  ): zio.ZLayer[WithTransactor[
+    Name
+  ] & aggs.Stores, Throwable, AggregateViewStore.Schemaless[
+    unId.Wrapped,
+    DomMeta,
+    DomData,
+    unQId.Wrapped,
+    aggView.Aggregates
+  ]] =
     ZLayer
-      .fromFunction[
-        Has[WithTransactor[Name]] & Logging & aggs.Stores & Clock,
-        AggregateViewStore.SchemalessService[
-          Id,
+      .fromZIO[
+        WithTransactor[Name] & aggs.Stores,
+        Throwable,
+        AggregateViewStore.Schemaless[
+          unId.Wrapped,
           DomMeta,
           DomData,
-          QueryId,
-          Aggregates
+          unQId.Wrapped,
+          aggView.Aggregates
         ]
-      ](env =>
-        new AggregateViewStore.Service[Map[
-          Id,
-          D.Schemaless[Id, DomMeta, DomData]
+      ](
+        for env <- ZIO.environment[WithTransactor[Name] & aggs.Stores]
+        yield new AggregateViewStore[Map[
+          unId.Wrapped,
+          D.Schemaless[unId.Wrapped, DomMeta, DomData]
         ], NonEmptyList[
-          QueryId
-        ], Aggregates]
+          unQId.Wrapped
+        ], aggView.Aggregates]
           with PostgresAggregateViewCoreStore[
             Name,
-            Map[Id, D.Schemaless[Id, DomMeta, DomData]],
-            NonEmptyList[QueryId],
-            Aggregates,
-            aggs.AggsId
+            Map[unId.Wrapped, D.Schemaless[unId.Wrapped, DomMeta, DomData]],
+            NonEmptyList[unQId.Wrapped],
+            aggView.Aggregates,
+            aggs.AggsId,
           ](
             schema,
             aggs,
@@ -118,14 +120,18 @@ trait PostgresSchemalessAggregateViewStore:
             catchUpTimeout
           ):
 
-          def queryToIds(query: NonEmptyList[QueryId]) =
+          def queryToIds(query: NonEmptyList[unQId.Wrapped]) =
             Some(query.map(queryIdToIds))
 
           def countAggregateViewM =
             sql"""SELECT count(*) from ${Fragment
-              .const(tableName)}""".query[Int].unique
+              .const(
+                tableName
+              )} where schema_version = ${aggViewIns.schemaVersion}"""
+              .query[Int]
+              .unique
 
-          def readAggregateViewM(query: Option[NonEmptyList[QueryId]]) =
+          def readAggregateViewM(query: Option[NonEmptyList[unQId.Wrapped]]) =
             val res = readState(new ReadState(tableName))(query)
             res.map(
               _.traverse(
@@ -138,33 +144,52 @@ trait PostgresSchemalessAggregateViewStore:
               )
             )
 
-          def persistAggregateViewM(
-            view: Map[Id, D.Schemaless[Id, DomMeta, DomData]]
-          ) = view.values.toList.toNel.fold(pure(()))(view_ =>
-            view_
-              .traverse(v =>
-                for
-                  data <- toData(v.data) match
-                    case Left(e)  => raiseError(e)
-                    case Right(r) => pure(r)
-                  doc = PostgresDocument(
-                    id = v.id,
-                    meta = toMeta(v.meta),
-                    createdBy = v.createdBy,
-                    lastUpdatedBy = v.lastUpdatedBy,
-                    data = data,
-                    deleted = v.deleted,
-                    created = v.created,
-                    lastUpdated = v.lastUpdated
-                  )
-                  _ <- upsertInto(tableName, doc)
-                yield ()
-              )
-              .map(_ => ())
-          )
+          def readAggregateViewsM =
+            selectAll[unId.Wrapped, Meta, Data](
+              tableName,
+              aggViewIns.schemaVersion
+            ).map(docs =>
+              docs
+                .traverse(v =>
+                  for value <- toSchemaless(v)
+                  yield v.id -> value
+                )
+                .map(x => List(x.toMap))
+            )
 
-          def toSchemaless(v: PostgresDocument[Id, Meta, Data]) = for
-            d <- fromData(v)
+          def persistAggregateViewM(
+            view: Map[
+              unId.Wrapped,
+              D.Schemaless[unId.Wrapped, DomMeta, DomData]
+            ]
+          ) =
+            view.values.toList.toNel.fold(pure(()))(view_ =>
+              view_
+                .traverse(v =>
+                  for
+                    data <- toData(v.data) match
+                      case Left(e)  => raiseError(e)
+                      case Right(r) => pure(r)
+                    doc = PostgresDocument(
+                      id = v.id,
+                      meta = toMeta(v.meta),
+                      createdBy = v.createdBy,
+                      lastUpdatedBy = v.lastUpdatedBy,
+                      data = data,
+                      schemaVersion = aggViewIns.schemaVersion,
+                      deleted = v.deleted,
+                      created = v.created,
+                      lastUpdated = v.lastUpdated
+                    )
+                    _ <- upsertInto(tableName, doc)
+                  yield ()
+                )
+                .map(_ => ())
+            )
+
+          def toSchemaless(
+            v: PostgresDocument[unId.Wrapped, Meta, Data]
+          ) = for d <- fromData(v)
           yield D.Schemaless(
             id = v.id,
             meta = fromMeta(v.meta),
@@ -191,11 +216,13 @@ trait PostgresSchemalessAggregateViewStore:
     ] =
       (ids: Option[NonEmptyList[Id]]) =>
         ids
-          .fold(selectAll[Id, Meta, Data](tableName))(ids_ =>
-            trySelectByIds[Id, Meta, Data](
-              tableName,
-              ids_
-            )
+          .fold(selectAll[Id, Meta, Data](tableName, view.schemaVersion))(
+            ids_ =>
+              trySelectByIds[Id, Meta, Data](
+                tableName,
+                view.schemaVersion,
+                ids_
+              )
           )
           .map(docs => Some(docs.map(d => d.id -> d).toMap))
 
@@ -207,26 +234,27 @@ trait PostgresSchemalessAggregateViewStore:
     ] =
       (query: Option[NonEmptyList[QueryId]]) =>
         query
-          .fold(selectAll[Id, Meta, Data](tableName))(query_ =>
-            val (ids, dataFieldValues) =
-              query_.map(idOrDataFieldValue).toList.partitionEither(a => a)
-            select[Id, Meta, Data](tableName)
-              .where(
-                ids.toNel
-                  .map(_ =>
-                    Filter
-                      .textFieldInArray("id", ids.map(ex.from(_).toString))
-                  )
-                  .orFalse
-                  .or(
-                    dataFieldValues.toNel
-                      .map(_ =>
-                        Filter.jsonValueInArray(getDataField, dataFieldValues)
-                      )
-                      .orFalse
-                  )
-              )
-              .query
+          .fold(selectAll[Id, Meta, Data](tableName, view.schemaVersion))(
+            query_ =>
+              val (ids, dataFieldValues) =
+                query_.map(idOrDataFieldValue).toList.partitionEither(a => a)
+              select[Id, Meta, Data](tableName, view.schemaVersion)
+                .where(
+                  ids.toNel
+                    .map(_ =>
+                      Filter
+                        .textFieldInArray("id", ids.map(ex.from(_).toString))
+                    )
+                    .orFalse
+                    .or(
+                      dataFieldValues.toNel
+                        .map(_ =>
+                          Filter.jsonValueInArray(getDataField, dataFieldValues)
+                        )
+                        .orFalse
+                    )
+                )
+                .query
           )
           .map(docs => Some(docs.map(d => d.id -> d).toMap))
 
@@ -237,24 +265,25 @@ trait PostgresSchemalessAggregateViewStore:
     ] =
       (query: Option[NonEmptyList[QueryId]]) =>
         query
-          .fold(selectAll[Id, Meta, Data](tableName))(query_ =>
-            val filters = query_
-              .map(getFieldAndValue)
-              .toList
-              .groupBy(_._1)
-              .view
-              .mapValues(_.map(_._2))
-              .toList
-              .foldLeft[FilterPredicate](Filter._false)((prev, next) =>
-                prev.or(
-                  next._2.toNel
-                    .map(_ => Filter.jsonValueInArray(next._1, next._2))
-                    .orFalse
+          .fold(selectAll[Id, Meta, Data](tableName, view.schemaVersion))(
+            query_ =>
+              val filters = query_
+                .map(getFieldAndValue)
+                .toList
+                .groupBy(_._1)
+                .view
+                .mapValues(_.map(_._2))
+                .toList
+                .foldLeft[FilterPredicate](Filter._false)((prev, next) =>
+                  prev.or(
+                    next._2.toNel
+                      .map(_ => Filter.jsonValueInArray(next._1, next._2))
+                      .orFalse
+                  )
                 )
-              )
 
-            select[Id, Meta, Data](tableName)
-              .where(filters)
-              .query
+              select[Id, Meta, Data](tableName, view.schemaVersion)
+                .where(filters)
+                .query
           )
           .map(docs => Some(docs.map(d => d.id -> d).toMap))

@@ -1,7 +1,7 @@
 package eventsourcing.infra
 
 import zio.json.*
-import zio.json.ast.Json
+import zio.json.ast.*
 import eventsourcing.domain.update.types.*
 import zio.json.JsonEncoder
 import zio.json.internal.*
@@ -29,7 +29,7 @@ trait JsonInstances:
         override def toJsonAST(a: Updated[A]): Either[String, Json] =
           a match
             case NotUpdated    => Right(Json.Null)
-            case HasUpdated(v) => e.toJsonAST(v)
+            case HasUpdated(v) => e.encoder.toJsonAST(v)
       ,
       new JsonDecoder[Updated[A]]:
         override def unsafeDecodeMissing(trace: List[JsonError]): Updated[A] =

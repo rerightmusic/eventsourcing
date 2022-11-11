@@ -3,15 +3,13 @@ package eventsourcing.test.infra
 import eventsourcing.test.domain as D
 import zio.ULayer
 import shared.postgres.all.{*, given}
-import zio.{ZEnv, ZLayer}
+import zio.{ZLayer}
 import shared.principals.PrincipalId
 import cats.data.NonEmptyList
-import shared.logging.all.Logging
-import zio.blocking.Blocking
+import shared.json.all.given
 import shared.data.all.{*, given}
-import zio.Has
 import eventsourcing.all.*
-import zio.duration.durationInt
+import zio.durationInt
 
 object PostgresAccountDetailsService:
   def live = PostgresAggregateViewService.schemaless[

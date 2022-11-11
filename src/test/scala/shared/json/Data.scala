@@ -7,7 +7,6 @@ import shared.time.all.{given, *}
 import cats.data.NonEmptyList
 import zio.json.*
 import zio.NonEmptyChunk
-import shared.json.all.given
 
 object New extends NewtypeWrapped[UUID]
 type New = New.Type

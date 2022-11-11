@@ -12,7 +12,6 @@ import shared.postgres.all.{given, *}
 import zio.interop.catz.*
 import fs2.Chunk
 import zio.ZIO
-import zio.{ZEnv, Has}
 import zio.RIO
 
 case class AccountDetails(
@@ -38,6 +37,7 @@ object AccountDetails:
       Account *: EmptyTuple
     ](
       "account_details",
+      1,
       evs =>
         evs.map(
           _.on[Account](ev => ev.id)

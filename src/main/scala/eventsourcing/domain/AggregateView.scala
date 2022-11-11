@@ -3,15 +3,15 @@ package eventsourcing.domain
 import generics.*
 import cats.data.NonEmptyList
 import types.*
-import izumi.reflect.Tag
 import cats.syntax.all.*
-import zio.{ZIO, ZEnv}
-import shared.logging.all.Logging
-trait AggregateView[View](using val t: Tag[View]):
+import zio.ZIO
+trait AggregateView[View]:
   type Query
   type Aggregates <: NonEmptyTuple
 
-  def storeName: String
+  val schemaVersion: Int
+  val storeName: String
+  lazy val versionedStoreName = s"${storeName}_v${schemaVersion}"
   def getQuery: (evs: NonEmptyList[AggregateViewEvent[Aggregates]]) => Query
   def aggregate: (
     state: Option[View],
@@ -21,12 +21,16 @@ trait AggregateView[View](using val t: Tag[View]):
 object AggregateView:
   def apply[View](using
     view: AggregateViewClass[View],
-    t: Tag[
-      AggregateViewService.Service[View] {
-        type ActualView = view.ActualView
-        type Query = view.Query
-        type Aggregates = view.Aggregates
-      }
+    tSvc: zio.Tag[
+      AggregateViewService.Aux[
+        View,
+        view.ActualView,
+        view.Query,
+        view.Aggregates
+      ]
+    ],
+    tStore: zio.Tag[
+      AggregateViewStore[view.ActualView, view.Query, view.Aggregates]
     ]
   ) = AggregateViewService
     .ServiceOps[View, view.ActualView, view.Query, view.Aggregates]
@@ -46,16 +50,18 @@ object AggregateView:
 
   def fold[View, Aggregates_ <: NonEmptyTuple](
     _storeName: String,
+    _schemaVersion: Int,
     _aggregate: (
       state: Option[View],
       event: AggregateViewEvent[Aggregates_]
     ) => Either[AggregateViewError, View]
-  )(using Tag[View]): Fold[View, Aggregates_] =
+  ): Fold[View, Aggregates_] =
     new AggregateView[View]:
       type Query = Unit
       type Aggregates = Aggregates_
 
       val storeName = _storeName
+      val schemaVersion = _schemaVersion
       def getQuery = _ => ()
       def aggregate = _aggregate
 
@@ -68,6 +74,7 @@ object AggregateView:
 
   def schemaless[Data, Id_, Meta_, QueryId_, Aggregates_ <: NonEmptyTuple](
     _storeName: String,
+    _schemaVersion: Int,
     _getQuery: (
       evs: NonEmptyList[AggregateViewEvent[Aggregates_]]
     ) => NonEmptyList[QueryId_],
@@ -78,32 +85,26 @@ object AggregateView:
       AggregateViewError,
       Map[Id_, types.Schemaless[Id_, Meta_, Data]]
     ]
-  )(using
-    Tag[Id_],
-    Tag[Meta_],
-    Tag[Data]
   ): Schemaless[Data, Id_, Meta_, QueryId_, Aggregates_] =
     new AggregateView[Map[Id_, types.Schemaless[Id_, Meta_, Data]]]:
       type Query = NonEmptyList[QueryId_]
       type Aggregates = Aggregates_
 
       val storeName = _storeName
+      val schemaVersion = _schemaVersion
       def getQuery = _getQuery
       def aggregate = _aggregate
 
   given aggToView[Agg, Id, Meta, EventData](using
-    agg: Aggregate.Aux[Agg, Id, Meta, EventData, ?],
-    tag: Tag[Agg],
-    tId: Tag[Id],
-    tMeta: Tag[Meta],
-    tEv: Tag[EventData]
+    agg: Aggregate.Aux[Agg, Id, Meta, EventData, ?]
   ): AggregateView.Aux[Map[Id, types.Schemaless[Id, Meta, Agg]], NonEmptyList[
     Id
   ], Agg *: EmptyTuple] =
     new AggregateView[Map[Id, types.Schemaless[Id, Meta, Agg]]]:
       type Query = NonEmptyList[Id]
       type Aggregates = Agg *: EmptyTuple
-      override val storeName = s"${agg.storeName}_view"
+      val storeName = s"${agg.storeName}_view"
+      val schemaVersion = agg.schemaVersion
       def getQuery = _.map(_.event.id.asInstanceOf[Id])
       def aggregate = (state, b) =>
         val state_ = state.getOrElse(Map.empty)
@@ -132,6 +133,41 @@ object AggregateView:
                 )
             )
         )
+
+  given aggMigrationToView[Agg](using
+    mig: AggregateMigration[Agg],
+    migratedAgg: Aggregate.Aux[
+      mig.MigratedAgg,
+      mig.Id,
+      mig.MigratedMeta,
+      mig.MigratedEventData,
+      ?
+    ],
+    agg: Aggregate.Aux[
+      Agg,
+      mig.Id,
+      mig.Meta,
+      mig.EventData,
+      ?
+    ]
+  ): AggregateView.Aux[List[
+    Event[mig.Id, mig.Meta, mig.EventData]
+  ], Unit, mig.MigratedAgg *: EmptyTuple] =
+    new AggregateView[List[Event[mig.Id, mig.Meta, mig.EventData]]]:
+      type Query = Unit
+      type Aggregates = mig.MigratedAgg *: EmptyTuple
+      val storeName = agg.storeName
+      val schemaVersion = agg.schemaVersion
+      def getQuery = _ => ()
+      def aggregate = (state, b) =>
+        if migratedAgg.schemaVersion != agg.schemaVersion - 1 then
+          Left(
+            AggregateViewError.RunAggregateViewError(
+              s"Incorrect schema version of migrated: ${migratedAgg.versionedStoreName} and agg: ${agg.versionedStoreName}"
+            )
+          )
+        val state_ = state.getOrElse(List.empty)
+        b.on[mig.MigratedAgg](ev => Right(state_ ++ mig.migrate_(ev)))
 
 trait AggregateViewClass[View]:
   type ActualView
@@ -169,3 +205,28 @@ object AggregateViewClass:
       type Query = NonEmptyList[QueryId]
       type Aggregates = Aggregates_
       val instance = ins
+
+  given migrationView[Agg](using
+    mig: AggregateMigration[Agg],
+    migratedAgg: Aggregate.Aux[
+      mig.MigratedAgg,
+      mig.Id,
+      mig.MigratedMeta,
+      mig.MigratedEventData,
+      ?
+    ],
+    agg: Aggregate.Aux[
+      Agg,
+      mig.Id,
+      mig.Meta,
+      mig.EventData,
+      ?
+    ]
+  ): AggregateViewClass.Aux[AggregateMigration[Agg], List[
+    Event[mig.Id, mig.Meta, mig.EventData]
+  ], Unit, mig.MigratedAgg *: EmptyTuple] =
+    new AggregateViewClass[AggregateMigration[Agg]]:
+      type ActualView = List[Event[mig.Id, mig.Meta, mig.EventData]]
+      type Query = Unit
+      type Aggregates = mig.MigratedAgg *: EmptyTuple
+      val instance = AggregateView.aggMigrationToView[Agg]

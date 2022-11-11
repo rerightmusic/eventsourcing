@@ -2,15 +2,13 @@ package eventsourcing.test
 
 import domain.*
 import infra as I
-import zio.{ZIO, ZEnv, Runtime}
+import zio.{ZIO, Runtime}
 import scala.util.Random
 import scala.util.Properties
 import doobie.util.transactor.Transactor
 import eventsourcing.all.*
-import zio.blocking.Blocking
-import zio.*
-import shared.logging.all.Logging
-import zio.Has
+import zio.{System => _, *}
+import shared.logging.all.*
 import shared.postgres.doobie.WithTransactor
 import shared.config.{all as Conf}
 import shared.postgres.PostgresConfig
@@ -18,49 +16,61 @@ import java.io.File
 import shared.principals.PrincipalId
 import cats.data.NonEmptyList
 import java.util.UUID
-import zio.clock.Clock
-import izumi.reflect.Tag
+import zio.{EnvironmentTag => Tag}
 import cats.syntax.all.*
 import zio.interop.catz.*
-import zio.duration.durationInt
 import zio.Fiber
 import org.scalatest.compatible.Assertion
 
-type AppEnv = ZEnv & Logging & Has[WithTransactor["Accounts"]] &
-  AggregateService[Account] & AggregateService[AccountV2.Account] &
-  AggregateService[Profile] & AggregateViewService[AccountDetails] &
+type AppEnv = WithTransactor["Accounts"] & AggregateService[Account] &
+  AggregateViewService[Account] &
+  AggregateService[AccountBackwardsCompatible.Account] &
+  AggregateViewService[AccountBackwardsCompatible.Account] &
+  AggregateService[Profile] & AggregateViewService[Profile] &
+  AggregateViewService[AccountDetails] &
   AggregateViewService[AccountAnalytics] &
-  AggregateViewService[AccountProfile] & Has[FiberState]
+  AggregateViewService[AccountProfile] &
+  AggregateService[
+    AccountBackwardsIncompatible.Account
+  ] &
+  AggregateViewService[
+    AccountBackwardsIncompatible.Account
+  ] &
+  AggregateViewService[
+    AggregateMigration[AccountBackwardsIncompatible.Account]
+  ] & FiberState
 
-def runSync[E <: Throwable, A](
-  zio: ZIO[AppEnv, E, A]
+def runSync[R >: AppEnv, E <: Throwable, A](
+  _zio: ZIO[R, E, A]
 ): A =
-  Runtime.default
-    .unsafeRunSync(
-      for
+  zio.Unsafe.unsafe { implicit u =>
+    Runtime.default.unsafe
+      .run(ZIO.scoped(for
         fiberRef <- Ref.make[List[Fiber.Runtime[Any, Any]]](List())
         res <- (for
-          te <- ZIO.access[Blocking](_.get.blockingExecutor.asEC)
+          te <- ZIO.executor.map(_.asExecutionContext)
           envFile = Properties
             .envOrNone("TESTS_ENV_FILE")
             .getOrElse(s"${System.getProperty("user.dir")}/../tests.env")
-          preConfEnv = Logging.console("aggregates-tests")
+          preConfEnv = defaultLogger("aggregates-tests")
           envVars <- Conf
             .getEnvVars(List(new File(envFile)))
-            .provideCustomLayer(preConfEnv)
+            .provideLayer(preConfEnv)
           pgConfig <- PostgresConfig.fromEnv["Accounts"](envVars)
-          layer =
-            preConfEnv >+>
+          layer: ZLayer[Scope, Throwable, AppEnv] =
+            preConfEnv >>>
               WithTransactor.live["Accounts"](pgConfig, te) >+>
-              ZEnv.live >+>
               I.PostgresAccountService.live >+>
-              I.PostgresAccountV2Service.live >+>
+              I.PostgresAccountBackwardsCompatibleService.live >+>
               I.PostgresProfileService.live >+>
               I.PostgresAccountDetailsService.live >+>
               I.PostgresAccountAnalyticsService.live >+>
               I.PostgresAccountProfileService.live >+>
+              I.PostgresAccountBackwardsIncompatibleService.live >+>
+              I.PostgresAccountBackwardsIncompatibleService.migration >+>
               ZLayer.succeed(FiberState(fiberRef))
-          r <- zio.provideCustomLayer(layer)
+          env <- ZIO.environment[AppEnv].provideLayer(layer)
+          r <- _zio.provideLayer(layer)
         yield r)
           .onExit(e =>
             for
@@ -72,16 +82,13 @@ def runSync[E <: Throwable, A](
                 else ZIO.unit
             yield ()
           )
-      yield res
-    )
-    .fold(
-      e => throw e.squash,
-      a => a
-    )
+      yield res))
+      .getOrThrowFiberFailure()
+  }
 
 def transactM[A](f: Transactor[Task] => Task[A])(using
   Tag[WithTransactor["Accounts"]]
-) = ZIO.serviceWith[WithTransactor["Accounts"]](x => f(x.transactor))
+) = ZIO.serviceWithZIO[WithTransactor["Accounts"]](x => f(x.transactor))
 
 def transact[A](f: Transactor[Task] => Task[A])(using
   Tag[WithTransactor["Accounts"]]
@@ -94,12 +101,22 @@ def logAndThrow = (e: Throwable) =>
 // Creating a function and then calling it here is necessary otherwise the following exception occurs
 // java.lang.ClassCastException: class org.scalatest.Succeeded$ cannot be cast to class scala.runtime.BoxedUnit
 // (org.scalatest.Succeeded$ and scala.runtime.BoxedUnit are in unnamed module of loader 'app')
-def zassert(a: => Assertion): Task[Unit] = ZIO.effect(() => a).map(_())
+def zassert(a: => Assertion): Task[Unit] = ZIO
+  .attempt(() => a)
+  .map(_())
+  .map(_ => ())
+  .catchAllDefect(e =>
+    for
+      fId <- ZIO.fiberId
+      _ <- ZIO
+        .failCause(Cause.die(e, zio.StackTrace.fromJava(fId, e.getStackTrace)))
+    yield ()
+  )
 
 case class FiberState(ref: Ref[List[Fiber.Runtime[Any, Any]]])
 def fork[E, A](
   f: => ZIO[AppEnv, E, A]
-): RIO[Has[FiberState] & AppEnv, Fiber.Runtime[E, A]] =
+): RIO[FiberState & AppEnv, Fiber.Runtime[E, A]] =
   for
     ref <- ZIO.service[FiberState].map(_.ref)
     value <- ref.get

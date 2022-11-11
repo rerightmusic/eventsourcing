@@ -2,12 +2,9 @@ package eventsourcing.domain
 
 import cats.data.NonEmptyList
 import types.*
-import zio.{ZEnv, ZIO, Task}
+import zio.{ZIO, Task}
 import zio.IO
 import zio.interop.catz.*
-import zio.clock.Clock
-import zio.blocking.Blocking
-import izumi.reflect.Tag
 import cats.syntax.all.*
 import shared.principals.PrincipalId
 import shared.newtypes.NewExtractor
@@ -16,28 +13,23 @@ import shared.logging.all.*
 import shared.time.all.*
 import fs2.*
 import scala.concurrent.duration.DurationInt
-import zio.duration.*
 import org.postgresql.util.PSQLException
 import zio.Schedule
+import zio.*
 
 object operations:
   def getAggregate[Agg, Id, Meta, EventData, Command](using
     agg: Aggregate.Aux[Agg, Id, Meta, EventData, Command],
-    t: Tag[AggregateViewStore.SchemalessService[
-      Id,
-      Meta,
-      EventData,
-      Id,
-      Agg *: EmptyTuple
-    ]],
-    t1: Tag[Id],
-    t2: Tag[Meta],
-    t3: Tag[EventData],
-    t4: Tag[Agg]
+    tId: zio.Tag[Id],
+    tMeta: zio.Tag[Meta],
+    tEventData: zio.Tag[EventData],
+    tSchemaless: zio.Tag[Schemaless[agg.Id, agg.Meta, Agg]],
+    tAgg: zio.Tag[Agg]
   )(
     id: Id
   ): ZIO[
-    AggregateStores[Agg, Id, Meta, EventData] & Clock & Blocking,
+    AggregateStore[Id, Meta, EventData] &
+      AggregateViewStore.Schemaless[Id, Meta, Agg, Id, Agg *: EmptyTuple],
     Throwable,
     Agg
   ] = for
@@ -61,9 +53,9 @@ object operations:
   def runCreateCommand[Agg](using
     agg: Aggregate[Agg],
     ex: NewExtractor.Aux[agg.Id, UUID],
-    t: Tag[agg.Id],
-    t2: Tag[agg.Meta],
-    t3: Tag[agg.EventData]
+    tId: zio.Tag[agg.Id],
+    tMeta: zio.Tag[agg.Meta],
+    tEventData: zio.Tag[agg.EventData]
   )(
     meta: agg.Meta,
     createdBy: PrincipalId,
@@ -93,22 +85,25 @@ object operations:
 
   def runUpdateCommand[Agg](using
     agg: Aggregate[Agg],
-    t: Tag[agg.Id],
-    t2: Tag[agg.Meta],
-    t3: Tag[agg.EventData],
-    t4: Tag[Agg],
-    t5: Tag[Map[
-      agg.Id,
-      Schemaless[agg.Id, agg.Meta, Agg]
-    ]],
-    t6: Tag[NonEmptyList[agg.Id]]
+    tId: zio.Tag[agg.Id],
+    tMeta: zio.Tag[agg.Meta],
+    tEventData: zio.Tag[agg.EventData],
+    tSchemaless: zio.Tag[Schemaless[agg.Id, agg.Meta, Agg]],
+    tAgg: zio.Tag[Agg]
   )(
     id: agg.Id,
     meta: agg.Meta,
     createdBy: PrincipalId,
     cmd: agg.Command
   ): ZIO[
-    AggregateStores[Agg, agg.Id, agg.Meta, agg.EventData] & Clock & Blocking,
+    AggregateStore[agg.Id, agg.Meta, agg.EventData] &
+      AggregateViewStore.Schemaless[
+        agg.Id,
+        agg.Meta,
+        Agg,
+        agg.Id,
+        Agg *: EmptyTuple
+      ],
     Throwable,
     Unit
   ] = for
@@ -131,16 +126,16 @@ object operations:
 
   def runExecuteCommand[Agg](using
     agg: Aggregate[Agg],
-    t: Tag[agg.Id],
-    t2: Tag[agg.Meta],
-    t3: Tag[agg.EventData],
-    t4: Tag[Agg],
-    t5: Tag[AggregateViewStore.Service[
-      Map[
-        agg.Id,
-        Schemaless[agg.Id, agg.Meta, Agg]
-      ],
-      NonEmptyList[agg.Id],
+    tId: zio.Tag[agg.Id],
+    tMeta: zio.Tag[agg.Meta],
+    tEventData: zio.Tag[agg.EventData],
+    tSchemaless: zio.Tag[Schemaless[agg.Id, agg.Meta, Agg]],
+    tAgg: zio.Tag[Agg],
+    tStore: zio.Tag[AggregateViewStore.Schemaless[
+      agg.Id,
+      agg.Meta,
+      Agg,
+      agg.Id,
       Agg *: EmptyTuple
     ]]
   )(
@@ -149,7 +144,14 @@ object operations:
     createdBy: PrincipalId,
     cmd: agg.Command
   ): ZIO[
-    AggregateStores[Agg, agg.Id, agg.Meta, agg.EventData] & Clock & Blocking,
+    AggregateStore[agg.Id, agg.Meta, agg.EventData] &
+      AggregateViewStore.Schemaless[
+        agg.Id,
+        agg.Meta,
+        Agg,
+        agg.Id,
+        Agg *: EmptyTuple
+      ],
     agg.CommandError | Throwable,
     Unit
   ] = for
@@ -175,7 +177,7 @@ object operations:
     )
   yield ()
 
-  def runCommand[Agg, Id, Meta, EventData, Command, CommandError](
+  private def runCommand[Agg, Id, Meta, EventData, Command, CommandError](
     aggr: Option[Agg],
     id: Id,
     meta: Meta,
@@ -183,55 +185,48 @@ object operations:
     cmd: Command
   )(using
     agg: Aggregate.Aux[Agg, Id, Meta, EventData, Command],
-    t1: Tag[Id],
-    t2: Tag[Meta],
-    t3: Tag[EventData]
+    tId: zio.Tag[Id],
+    tMeta: zio.Tag[Meta],
+    tEventData: zio.Tag[EventData]
   ): ZIO[AggregateStore[Id, Meta, EventData], CommandError | Throwable, Unit] =
     for
       evs <- ZIO.fromEither(agg.handleCommand(aggr, cmd))
-      _ <- ZIO.accessM[AggregateStore[Id, Meta, EventData]](
+      _ <- ZIO.environmentWithZIO[AggregateStore[Id, Meta, EventData]](
         _.get.persistEventsForId(id, meta, createdBy, evs)
       )
     yield ()
 
   def runAggregateView[View](using
     aggView: AggregateViewClass[View],
-    tV: Tag[View],
-    tQ: Tag[aggView.Query],
-    tA: Tag[aggView.Aggregates],
-    tAc: Tag[aggView.ActualView],
-    tAg: Tag[AggregateViewStore.Service[
-      aggView.ActualView,
-      aggView.Query,
-      aggView.Aggregates
-    ]]
+    tStore: zio.Tag[
+      AggregateViewStore[aggView.ActualView, aggView.Query, aggView.Aggregates]
+    ]
   )(
     mode: AggregateViewMode,
     subscribe: Boolean
   ): ZIO[
-    AggregateViewStore[aggView.ActualView, aggView.Query, aggView.Aggregates] &
-      ZEnv & Logging,
+    AggregateViewStore[aggView.ActualView, aggView.Query, aggView.Aggregates],
     Throwable,
     Unit
   ] = runAggregateView_(mode, subscribe)
-    .tapCause(err =>
+    .tapErrorCause(e =>
       for
-        _ <- Logging.error(
-          s"Something went wrong with view ${aggView.instance.storeName}, ${err.prettyPrint}",
-          err
+        _ <- ZIO.logErrorCause(
+          s"Something went wrong with view ${aggView.instance.versionedStoreName}, ${e.prettyPrint}",
+          e
         )
         store <- ZIO
-          .environment[
+          .service[
             AggregateViewStore[
               aggView.ActualView,
               aggView.Query,
               aggView.Aggregates
-            ] & ZEnv
+            ]
           ]
-        _ <- store.get.mergeAggregateViewStatus(
+        _ <- store.mergeAggregateViewStatus(
           AggregateViewStatus(
             sequenceIds = Map(),
-            error = Some(err.toString)
+            error = Some(e.prettyPrint)
           )
         )
       yield ()
@@ -245,27 +240,20 @@ object operations:
         }
     )
 
-  def runAggregateView_[View](using
+  private def runAggregateView_[View](using
     aggView: AggregateViewClass[View],
-    tV: Tag[View],
-    tQ: Tag[aggView.Query],
-    tA: Tag[aggView.Aggregates],
-    tAc: Tag[aggView.ActualView],
-    tAg: Tag[AggregateViewStore.Service[
-      aggView.ActualView,
-      aggView.Query,
-      aggView.Aggregates
-    ]]
+    tStore: zio.Tag[
+      AggregateViewStore[aggView.ActualView, aggView.Query, aggView.Aggregates]
+    ]
   )(
     mode: AggregateViewMode,
     subscribe: Boolean
   ): ZIO[
-    AggregateViewStore[aggView.ActualView, aggView.Query, aggView.Aggregates] &
-      ZEnv & Logging,
+    AggregateViewStore[aggView.ActualView, aggView.Query, aggView.Aggregates],
     Throwable,
     Unit
   ] = for
-    _ <- Logging.info(s"${aggView.instance.storeName} started")
+    _ <- ZIO.logInfo(s"${aggView.instance.versionedStoreName} started")
     catchUpStartTime <- now
     store <- ZIO
       .environment[
@@ -273,10 +261,18 @@ object operations:
           aggView.ActualView,
           aggView.Query,
           aggView.Aggregates
-        ] & ZEnv
+        ]
       ]
     status <- mode match
-      case AggregateViewMode.Continue => store.get.readAggregateViewStatus
+      case AggregateViewMode.Continue =>
+        for
+          st <- store.get.readAggregateViewStatus
+          res <- st match
+            case None => store.get.resetAggregateView.map(_ => None)
+            case Some(st_) if st_.sequenceIds.isEmpty =>
+              store.get.resetAggregateView.map(_ => None)
+            case Some(st_) => ZIO.some(st_)
+        yield res
       case AggregateViewMode.Restart =>
         store.get.resetAggregateView
           .map(_ => None)
@@ -289,10 +285,10 @@ object operations:
           else Stream.empty)
         .map(c =>
           val removeDuplicates = c.foldLeft(
-            Chunk.empty[AggregateViewEvent[aggView.Aggregates]] -> 0
+            fs2.Chunk.empty[AggregateViewEvent[aggView.Aggregates]] -> 0
           )((st, n) =>
             if n.event.sequenceId.value <= st._2 then st
-            else (st._1 ++ Chunk(n), n.event.sequenceId.value)
+            else (st._1 ++ fs2.Chunk(n), n.event.sequenceId.value)
           )
           AggregateViewStage.Sync -> removeDuplicates._1
         ))
@@ -302,9 +298,10 @@ object operations:
           evs.toNel.fold(ZIO.none)(evs_ =>
             for
               startTime <- now
-              (state, status) <- store.get.readAggregateViewAndStatus(
+              res <- store.get.readAggregateViewAndStatus(
                 Some(aggView.instance.getQuery(evs_))
               )
+              (state, status) = res
               filtered = evs_.filterNot(ev =>
                 ev.event.sequenceId.value <= status.fold(0)(x =>
                   x.getSequenceId(ev.name).value
@@ -314,8 +311,8 @@ object operations:
               res <- filtered.toNel.fold(ZIO.none)(filtered_ =>
                 for
                   _ <-
-                    Logging.info(
-                      s"${aggView.instance.storeName} ${if isCatchUp then "CatchUp"
+                    ZIO.logInfo(
+                      s"${aggView.instance.versionedStoreName} ${if isCatchUp then "CatchUp"
                       else "Sync"} running on ${filtered_.length} events, last sequenceId: ${filtered_.last.event.sequenceId}"
                     )
                   res = filtered_.foldLeft(
@@ -399,8 +396,8 @@ object operations:
               x._2,
               x._3
             )
-            _ <- Logging.info(
-              s"${aggView.instance.storeName} ${if isCatchUp then "CatchUp"
+            _ <- ZIO.logInfo(
+              s"${aggView.instance.versionedStoreName} ${if isCatchUp then "CatchUp"
               else "Sync"} ran ${x._2.sequenceIds}"
             )
           yield ()
@@ -412,22 +409,26 @@ object operations:
 
   def getAggregateView[View, Query, Aggregates <: NonEmptyTuple](using
     view: AggregateView.Aux[View, Query, Aggregates],
-    t: Tag[AggregateViewStore.Service[View, Query, Aggregates]]
+    tView: zio.Tag[View],
+    tQuery: zio.Tag[Query],
+    tAggregates: zio.Tag[Aggregates],
+    tStore: zio.Tag[AggregateViewStore[View, Query, Aggregates]]
   )(
     query: Option[Query]
   ): ZIO[
-    AggregateViewStore[View, Query, Aggregates] & Clock & Blocking,
+    AggregateViewStore[View, Query, Aggregates],
     Throwable,
     Option[View]
   ] = for
-    (currView, status) <- ZIO
-      .accessM[AggregateViewStore[View, Query, Aggregates]](
+    res <- ZIO
+      .environmentWithZIO[AggregateViewStore[View, Query, Aggregates]](
         _.get
           .readAggregateViewAndStatus(query)
       )
+    (currView, status) = res
     viewRes <- ZIO
-      .accessM[
-        AggregateViewStore[View, Query, Aggregates] & Clock & Blocking
+      .environmentWithZIO[
+        AggregateViewStore[View, Query, Aggregates]
       ](
         _.get
           .streamEventsFrom(

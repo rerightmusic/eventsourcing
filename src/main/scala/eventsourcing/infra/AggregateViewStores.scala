@@ -3,13 +3,13 @@ package eventsourcing.infra
 import eventsourcing.domain.{Aggregate, AggregateStore}
 import eventsourcing.domain.types.*
 import cats.data.NonEmptyList
-import izumi.reflect.Tag
 import zio.ZIO
 import fs2.Stream
 import zio.Task
-import zio.{IO, RIO}
+import zio.{IO, URIO, RIO}
 import cats.syntax.all.*
 import zio.interop.catz.*
+import zio.ZEnvironment
 
 trait AggregateViewStores[Aggregates <: NonEmptyTuple]:
   type Stores
@@ -31,9 +31,9 @@ object AggregateViewStores:
 
   given aggs[Agg, Id, Meta, EventData](using
     t: Aggregate.Aux[Agg, Id, Meta, EventData, ?],
-    tId: Tag[Id],
-    tMeta: Tag[Meta],
-    tEv: Tag[EventData]
+    tId: zio.Tag[Id],
+    tMeta: zio.Tag[Meta],
+    tEventData: zio.Tag[EventData]
   ): AggregateViewStores.Aux[Agg *: EmptyTuple, AggregateStore[
     Id,
     Meta,
@@ -50,12 +50,12 @@ object AggregateViewStores:
         AggregateViewEvent[Agg *: EmptyTuple]
       ]] =
         val seqId = status
-          .map(_.getSequenceId(t.storeName))
+          .map(_.getSequenceId(t.versionedStoreName))
           .getOrElse(SequenceId(0))
         Stream
           .eval(
             ZIO
-              .access[AggregateStore[Id, Meta, EventData]](svc =>
+              .environmentWith[AggregateStore[Id, Meta, EventData]](svc =>
                 queries.flatMap(_.toList.flatMap(_.head.toList).toNel) match
                   case None =>
                     svc.get
@@ -71,7 +71,7 @@ object AggregateViewStores:
                 _.map(
                   _.map(ev =>
                     AggregateViewEvent(
-                      t.storeName,
+                      t.versionedStoreName,
                       ev.asInstanceOf[Event[Any, Any, Any]]
                     )
                   )
@@ -81,8 +81,10 @@ object AggregateViewStores:
           .flatten
 
       def getLastSequenceIds = ZIO
-        .accessM[AggregateStore[Id, Meta, EventData]](_.get.getLastSequenceId)
-        .map(seqId => Map(t.storeName -> seqId))
+        .environmentWithZIO[AggregateStore[Id, Meta, EventData]](
+          _.get.getLastSequenceId
+        )
+        .map(seqId => Map(t.versionedStoreName -> seqId))
 
   given aggs2[
     Agg,
@@ -96,10 +98,9 @@ object AggregateViewStores:
   ](using
     t: Aggregate.Aux[Agg, Id, Meta, EventData, ?],
     n: AggregateViewStores.Aux[X *: Xs, Stores_, AggsId_],
-    tId: Tag[Id],
-    tMeta: Tag[Meta],
-    tEv: Tag[EventData],
-    x: Tag[X]
+    tId: zio.Tag[Id],
+    tMeta: zio.Tag[Meta],
+    tEventData: zio.Tag[EventData]
   ): AggregateViewStores.Aux[Agg *: X *: Xs, AggregateStore[
     Id,
     Meta,
@@ -117,9 +118,9 @@ object AggregateViewStores:
       ]]] =
         Stream
           .eval(
-            ZIO.access[AggregateStore[Id, Meta, EventData]](svc =>
+            ZIO.environmentWith[AggregateStore[Id, Meta, EventData]](svc =>
               val seqId = status
-                .map(_.getSequenceId(t.storeName))
+                .map(_.getSequenceId(t.versionedStoreName))
                 .getOrElse(SequenceId(0))
               queries.flatMap(_.toList.flatMap { x =>
                 val o: Option[Id] = x.head
@@ -137,7 +138,7 @@ object AggregateViewStores:
             _.map(
               _.map(ev =>
                 AggregateViewEvent[Agg *: X *: Xs](
-                  t.storeName,
+                  t.versionedStoreName,
                   ev.asInstanceOf[Event[Any, Any, Any]]
                 )
               )
@@ -150,8 +151,8 @@ object AggregateViewStores:
       def getLastSequenceIds =
         for
           seqId <- ZIO
-            .accessM[AggregateStore[Id, Meta, EventData]](
+            .environmentWithZIO[AggregateStore[Id, Meta, EventData]](
               _.get.getLastSequenceId
             )
           seqIds <- n.getLastSequenceIds
-        yield Map(t.storeName -> seqId) ++ seqIds
+        yield Map(t.versionedStoreName -> seqId) ++ seqIds

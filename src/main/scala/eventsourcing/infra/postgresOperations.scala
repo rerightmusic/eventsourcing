@@ -10,7 +10,6 @@ import _root_.doobie.util.update.Update
 import _root_.doobie.{Fragment, Read, Write}
 import _root_.doobie.postgres.implicits.*
 import shared.principals.PrincipalId
-
 import java.time.OffsetDateTime
 import doobie.util.transactor.Transactor
 import cats.Monad
@@ -20,14 +19,14 @@ import org.postgresql.PGNotification
 import zio.Task
 import zio.stream.ZStream
 import doobie.Transactor
-import zio.duration.Duration
+import zio.Duration
 import doobie.*
 import doobie.implicits.*
 import doobie.postgres.*
 import cats.syntax.all.*
 import zio.interop.catz.*
-import zio.ZManaged
 import shared.postgres.doobie.WithTransactor
+import shared.postgres.schemaless.operations.logHandler
 import fs2.{Stream, Pipe}
 import fs2.Stream._
 import scala.concurrent.duration.*
@@ -35,8 +34,8 @@ import cats.effect.kernel.Resource
 import zio.interop.catz.implicits.*
 import eventsourcing.domain.types.SequenceId
 import zio.RIO
-import shared.logging.all.Logging
 import zio.ZIO
+import zio.managed._
 
 object postgresOperations:
   case class Cols(cols: List[String]):
@@ -55,6 +54,7 @@ object postgresOperations:
       "created_by",
       "created",
       "version",
+      "schema_version",
       "deleted",
       "data"
     )
@@ -65,27 +65,27 @@ object postgresOperations:
 
   def insertInto[Id, Meta, Data](
     tableName: String,
-    doc: WritePostgresDocument[Id, Meta, Data]
+    doc: WriteEventPostgresDocument[Id, Meta, Data]
   )(using
-    Write[WritePostgresDocument[Id, Meta, Data]]
+    Write[WriteEventPostgresDocument[Id, Meta, Data]]
   ): doobie.ConnectionIO[Int] =
     insertInto(tableName, NonEmptyList.one(doc))
 
   def insertInto[Id, Meta, Data](
     tableName: String,
-    docs: NonEmptyList[WritePostgresDocument[Id, Meta, Data]]
+    docs: NonEmptyList[WriteEventPostgresDocument[Id, Meta, Data]]
   )(using
-    Write[WritePostgresDocument[Id, Meta, Data]]
+    w: Write[WriteEventPostgresDocument[Id, Meta, Data]]
   ): doobie.ConnectionIO[Int] =
     Update(
-      s"INSERT INTO $tableName (${writePGCols.strPGDocStar}) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).updateMany(docs)
+      s"INSERT INTO $tableName (${writePGCols.strPGDocStar}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )(w, logHandler).updateMany(docs)
 
   def insertInto[Id, Meta, Data](
     tableName: String,
-    docs: List[WritePostgresDocument[Id, Meta, Data]]
+    docs: List[WriteEventPostgresDocument[Id, Meta, Data]]
   )(implicit
-    writeDoc: Write[WritePostgresDocument[Id, Meta, Data]]
+    writeDoc: Write[WriteEventPostgresDocument[Id, Meta, Data]]
   ): doobie.ConnectionIO[Int] =
     docs match {
       case Nil    => Free.pure(0)

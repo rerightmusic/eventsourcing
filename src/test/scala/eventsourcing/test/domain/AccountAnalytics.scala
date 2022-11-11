@@ -12,7 +12,6 @@ import shared.postgres.all.{given, *}
 import zio.interop.catz.*
 import fs2.Chunk
 import zio.ZIO
-import zio.{ZEnv, Has}
 import zio.RIO
 
 case class AccountAnalytics(
@@ -31,6 +30,7 @@ object AccountAnalytics:
   ] =
     AggregateView.fold[AccountAnalytics, Account *: EmptyTuple](
       "account_analytics",
+      1,
       (state, ev) =>
         ev.on[Account](ev =>
           val state_ = state.getOrElse(AccountAnalytics(0, 0, 0, 0, 0, 0))

@@ -3,16 +3,14 @@ package eventsourcing.test.infra
 import eventsourcing.test.domain as D
 import zio.ULayer
 import shared.postgres.all.{*, given}
-import zio.{ZEnv, ZLayer}
+import zio.{ZLayer}
 import eventsourcing.all.*
 import shared.principals.PrincipalId
 import cats.data.NonEmptyList
-import shared.logging.all.Logging
-import zio.blocking.Blocking
 import shared.data.all.{*, given}
-import zio.Has
-import izumi.reflect.Tag
-import zio.duration.durationInt
+import zio.{EnvironmentTag => Tag}
+import shared.json.all.given
+import zio.durationInt
 
 object PostgresProfileService:
   def live =

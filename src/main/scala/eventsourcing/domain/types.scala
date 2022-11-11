@@ -8,7 +8,6 @@ import cats.data.NonEmptyList
 import cats.syntax.all.*
 import eventsourcing.domain.generics.Remove
 import eventsourcing.domain.generics.Add
-import zio.Has
 
 object types:
   type SequenceId = SequenceId.Type
@@ -39,6 +38,7 @@ object types:
     createdBy: PrincipalId,
     created: OffsetDateTime,
     version: Int,
+    schemaVersion: Int,
     deleted: Boolean,
     data: EventData
   )
@@ -217,7 +217,7 @@ object types:
             )
               *: Fs,
             ev: AggregateViewEvent[Agg *: Xs]
-          ): Res = if ev.name === agg.storeName then
+          ): Res = if ev.name === agg.versionedStoreName then
             val fns_ = fns.head
             fns_(
               ev.event.asInstanceOf[Event[agg.Id, agg.Meta, agg.EventData]]
@@ -280,7 +280,3 @@ object types:
 
   enum AggregateViewStage:
     case CatchUp, Sync
-
-  type AggregateStores[Agg, Id, Meta, EventData] =
-    AggregateStore[Id, Meta, EventData] &
-      AggregateViewStore.Schemaless[Id, Meta, Agg, Id, Agg *: EmptyTuple]

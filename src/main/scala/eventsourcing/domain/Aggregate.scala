@@ -2,16 +2,12 @@ package eventsourcing.domain
 
 import cats.data.NonEmptyList
 import types.*
-import izumi.reflect.Tag
 import cats.syntax.all.*
 import zio.ZIO
 import shared.newtypes.NewExtractor
 import shared.principals.PrincipalId
-import zio.clock.Clock
-import zio.blocking.Blocking
-import zio.blocking.Blocking
 import java.util.UUID
-import zio.Has
+
 trait Aggregate[Agg]:
   type Name <: String
   type Id
@@ -20,7 +16,9 @@ trait Aggregate[Agg]:
   type Command
   type CommandError = Throwable
 
-  def storeName: String
+  val storeName: String
+  val schemaVersion: Int
+  lazy val versionedStoreName = s"${storeName}_v${schemaVersion}"
 
   def aggregate: (
     agg: Option[Agg],
@@ -68,16 +66,10 @@ object Aggregate:
 
   def apply[Agg](using
     agg: Aggregate[Agg],
-    t: Tag[
-      AggregateService.Service[Agg] {
-        type Id = agg.Id
-        type Meta = agg.Meta
-        type EventData = agg.EventData
-        type Command = agg.Command
-      }
+    tSvc: zio.Tag[
+      AggregateService.Aux[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command]
     ],
-    t2: Tag[AggregateStore.Service[agg.Id, agg.Meta, agg.EventData]],
-    t3: Tag[AggregateViewStore.SchemalessService[
+    tViewStore: zio.Tag[AggregateViewStore.Schemaless[
       agg.Id,
       agg.Meta,
       Agg,

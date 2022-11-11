@@ -16,7 +16,10 @@ object all:
     if repr.typeSymbol.owner.name == "Newtype" then '{ new IsNewtype[E] {} }
     else throw new Exception(s"Type ${repr.typeSymbol.name} isn't a newtype")
 
-  trait IsEnum[A]
+  trait IsEnum[A]:
+    def enumFromString(x: String): A
+    def toString(a: A) = a.toString
+
   object IsEnum:
     transparent inline given isEnum[E]: IsEnum[E] = ${
       isEnumImpl[E]
@@ -28,8 +31,57 @@ object all:
     if repr.typeSymbol.children.nonEmpty && repr.typeSymbol.children.forall(
         _.declaredFields.isEmpty && !repr.typeSymbol.flags.is(Flags.Case)
       )
-    then '{ new IsEnum[E] {} }
+    then
+      '{
+        new IsEnum[E] {
+          def enumFromString(str: String) = ${ enumFromStringImpl[E]('str) }
+        }
+      }
     else throw new Exception(s"Type ${repr.typeSymbol.name} isn't an enum")
+
+  private def enumFromStringImpl[E: Type](using Quotes)(
+    str: Expr[String]
+  ): Expr[E] =
+    import quotes.reflect.*
+    val repr = TypeRepr.of[E]
+    if repr.typeSymbol.flags.is(Flags.Enum) then
+      Select
+        .overloaded(repr.ident, "valueOf", Nil, List(str.asTerm))
+        .asExprOf[E]
+    else
+      Match(
+        str.asTerm,
+        repr.typeSymbol.children.map(c =>
+          val childName = repr.selectChild(c).typeSymbol.name
+          CaseDef(
+            Literal(StringConstant(childName.replace("$", ""))),
+            None,
+            Ref(
+              repr
+                .selectChild(c)
+                .typeSymbol
+                .companionModule
+            )
+              .asExprOf[E]
+              .asTerm
+          )
+        ) ++ List(
+          CaseDef(
+            Wildcard(),
+            None,
+            Select.overloaded(
+              '{ (tpeName: String) =>
+                throw new Exception(
+                  s"Failed to match ${$str} for enum ${tpeName}"
+                )
+              }.asTerm,
+              "apply",
+              Nil,
+              List(Literal(StringConstant(repr.typeSymbol.name)))
+            )
+          )
+        )
+      ).asExprOf[E]
 
   trait IsProductOrSumOfProducts[A]
   object IsProductOrSumOfProducts:

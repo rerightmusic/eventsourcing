@@ -11,7 +11,7 @@ import org.http4s.Method
 import scala.concurrent.duration.*
 import language.unsafeNulls
 import cats.syntax.all.*
-import shared.http.json.given
+import shared.http.all.given
 
 sealed trait Health derives JsonCodec
 case class Healthy(details: Option[Json] = None) extends Health

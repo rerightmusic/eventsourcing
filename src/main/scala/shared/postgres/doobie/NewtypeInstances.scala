@@ -2,7 +2,6 @@ package shared.postgres.doobie
 
 import _root_.doobie.util.{Get, Put}
 import shared.newtypes.NewExtractor
-import shared.macros.all.IsNewtype
 
 trait NewtypeInstances:
   inline given getNewtype[A, B](using

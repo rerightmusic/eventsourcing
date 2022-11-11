@@ -2,84 +2,129 @@ package eventsourcing.domain
 
 import cats.data.NonEmptyList
 import types.*
-import izumi.reflect.Tag
 import cats.syntax.all.*
 import zio.ZIO
 import shared.newtypes.NewExtractor
 import shared.principals.PrincipalId
-import zio.clock.Clock
-import zio.blocking.Blocking
 import java.util.UUID
-import zio.Has
 import zio.Task
+import zio.ZEnvironment
 import zio.ZLayer
 
-type AggregateService[Agg] = Has[AggregateService.Service[Agg]] &
-  AggregateViewService[Agg]
+trait AggregateService[Agg]:
+  type Id
+  type Meta
+  type EventData
+  type Command
+  def store[R, E, A](
+    f: AggregateStore[Id, Meta, EventData] => ZIO[R, E, A]
+  ): ZIO[R, E, A]
+
+  def viewStore[R, E, A](
+    f: AggregateViewStore.Schemaless[
+      Id,
+      Meta,
+      Agg,
+      Id,
+      Agg *: EmptyTuple
+    ] => ZIO[R, E, A]
+  ): ZIO[R, E, A]
+
+  def get(id: Id): Task[Agg]
+  def exec(
+    id: Id,
+    meta: Meta,
+    createdBy: PrincipalId,
+    cmd: Command
+  ): Task[Unit]
+  def create(meta: Meta, createdBy: PrincipalId, cmd: Command): Task[Id]
+  def update(
+    id: Id,
+    meta: Meta,
+    createdBy: PrincipalId,
+    cmd: Command
+  ): Task[Unit]
+
 object AggregateService:
-  trait Service[Agg]:
-    type Id
-    type Meta
-    type EventData
-    type Command
-    def store[R, E, A](
-      f: AggregateStore.Service[Id, Meta, EventData] => ZIO[R, E, A]
-    ): ZIO[R, E, A]
-    def viewStore[R, E, A](
-      f: AggregateViewStore.SchemalessService[
-        Id,
-        Meta,
-        Agg,
-        Id,
-        Agg *: EmptyTuple
-      ] => ZIO[R, E, A]
-    ): ZIO[R, E, A]
-    def get(id: Id): Task[Agg]
-    def exec(
-      id: Id,
-      meta: Meta,
-      createdBy: PrincipalId,
-      cmd: Command
-    ): Task[Unit]
-    def create(meta: Meta, createdBy: PrincipalId, cmd: Command): Task[Id]
-    def update(
-      id: Id,
-      meta: Meta,
-      createdBy: PrincipalId,
-      cmd: Command
-    ): Task[Unit]
+  type Aux[Agg, Id_, Meta_, EventData_, Command_] = AggregateService[Agg] {
+    type Id = Id_
+    type Meta = Meta_
+    type EventData = EventData_
+    type Command = Command_
+  }
 
   def live[Agg](using
     agg: Aggregate[Agg],
-    t: Tag[agg.Id],
-    t2: Tag[agg.Meta],
-    t3: Tag[agg.EventData],
-    t4: Tag[Agg],
-    t5: Tag[Map[
-      agg.Id,
-      Schemaless[agg.Id, agg.Meta, Agg]
-    ]],
-    t6: Tag[NonEmptyList[agg.Id]],
-    t7: Tag[AggregateStore.Service[agg.Id, agg.Meta, agg.EventData]],
-    t8: Tag[AggregateViewStore.SchemalessService[
+    ex: NewExtractor.Aux[agg.Id, UUID],
+    tAgg: zio.Tag[Agg],
+    tAggs: zio.Tag[Agg *: EmptyTuple],
+    tMap: zio.Tag[Map[agg.Id, Schemaless[agg.Id, agg.Meta, Agg]]],
+    tId: zio.Tag[agg.Id],
+    tMeta: zio.Tag[agg.Meta],
+    tEventData: zio.Tag[agg.EventData],
+    tSchemaless: zio.Tag[Schemaless[agg.Id, agg.Meta, Agg]],
+    tSvc: zio.Tag[
+      AggregateService.Aux[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command]
+    ],
+    tStore: zio.Tag[AggregateStore[agg.Id, agg.Meta, agg.EventData]],
+    tViewStore: zio.Tag[AggregateViewStore.Schemaless[
       agg.Id,
       agg.Meta,
       Agg,
       agg.Id,
       Agg *: EmptyTuple
-    ]],
-    ex: NewExtractor.Aux[agg.Id, UUID]
-  ) =
-    ZLayer
-      .fromFunction[AggregateStores[
-        Agg,
+    ]]
+  ): ZLayer[
+    AggregateStore[
+      agg.Id,
+      agg.Meta,
+      agg.EventData
+    ] &
+      AggregateViewStore.Schemaless[
         agg.Id,
         agg.Meta,
-        agg.EventData
-      ] & Clock & Blocking, Service[
-        Agg
-      ]](env =>
-        new Service[Agg]:
+        Agg,
+        agg.Id,
+        Agg *: EmptyTuple
+      ],
+    Throwable,
+    AggregateService[Agg]
+  ] =
+    ZLayer
+      .fromZIO[
+        AggregateStore[
+          agg.Id,
+          agg.Meta,
+          agg.EventData
+        ] &
+          AggregateViewStore.Schemaless[
+            agg.Id,
+            agg.Meta,
+            Agg,
+            agg.Id,
+            Agg *: EmptyTuple
+          ],
+        Throwable,
+        AggregateService[
+          Agg
+        ]
+      ](
+        for
+          env <- ZIO.environment[
+            AggregateStore[
+              agg.Id,
+              agg.Meta,
+              agg.EventData
+            ] &
+              AggregateViewStore.Schemaless[
+                agg.Id,
+                agg.Meta,
+                Agg,
+                agg.Id,
+                Agg *: EmptyTuple
+              ]
+          ]
+        yield new AggregateService[Agg]:
           type Id = agg.Id
           type Meta = agg.Meta
 
@@ -88,23 +133,35 @@ object AggregateService:
           type Command = agg.Command
 
           def store[R, E, A](
-            f: AggregateStore.Service[Id, Meta, EventData] => ZIO[R, E, A]
-          ) = f(env.get)
+            f: AggregateStore[Id, Meta, EventData] => ZIO[
+              R,
+              E,
+              A
+            ]
+          ) = f(env.get[AggregateStore[Id, Meta, EventData]])
           def viewStore[R, E, A](
-            f: AggregateViewStore.SchemalessService[
+            f: AggregateViewStore.Schemaless[
               Id,
               Meta,
               Agg,
               Id,
               Agg *: EmptyTuple
             ] => ZIO[R, E, A]
-          ) = f(env.get)
+          ) = f(
+            env.get[AggregateViewStore.Schemaless[
+              Id,
+              Meta,
+              Agg,
+              Id,
+              Agg *: EmptyTuple
+            ]]
+          )
 
           def get(
             id: Id
           ): Task[Agg] = operations
             .getAggregate[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command](id)
-            .provide(env)
+            .provideEnvironment(env)
 
           def exec(
             id: Id,
@@ -114,10 +171,12 @@ object AggregateService:
           ) =
             operations
               .runExecuteCommand[Agg](id, meta, createdBy, cmd)
-              .provide(env)
+              .provideEnvironment(env)
 
           def create(meta: Meta, createdBy: PrincipalId, cmd: Command) =
-            operations.runCreateCommand[Agg](meta, createdBy, cmd).provide(env)
+            operations
+              .runCreateCommand[Agg](meta, createdBy, cmd)
+              .provideEnvironment(env)
 
           def update(
             id: Id,
@@ -126,42 +185,27 @@ object AggregateService:
             cmd: Command
           ) = operations
             .runUpdateCommand[Agg](id, meta, createdBy, cmd)
-            .provide(env)
+            .provideEnvironment(env)
       )
 
   def apply[Agg](using
     agg: Aggregate[Agg],
-    t: Tag[
-      AggregateService.Service[Agg] {
-        type Id = agg.Id
-        type Meta = agg.Meta
-        type EventData = agg.EventData
-        type Command = agg.Command
-
-      }
+    tSvc: zio.Tag[
+      AggregateService.Aux[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command]
     ],
-    t2: Tag[AggregateStore.Service[agg.Id, agg.Meta, agg.EventData]],
-    t3: Tag[AggregateViewStore.SchemalessService[
+    tViewStore: zio.Tag[AggregateViewStore.Schemaless[
       agg.Id,
       agg.Meta,
       Agg,
       agg.Id,
       Agg *: EmptyTuple
     ]]
-  ) =
+  ): ServiceOps[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command] =
     ServiceOps[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command]
 
   class ServiceOps[Agg, Id_, Meta_, EventData_, Command_](using
-    Tag[
-      AggregateService.Service[Agg] {
-        type Id = Id_
-        type Meta = Meta_
-        type EventData = EventData_
-        type Command = Command_
-      }
-    ],
-    Tag[AggregateStore.Service[Id_, Meta_, EventData_]],
-    Tag[AggregateViewStore.SchemalessService[
+    tSvc: zio.Tag[AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]],
+    tViewStore: zio.Tag[AggregateViewStore.Schemaless[
       Id_,
       Meta_,
       Agg,
@@ -170,23 +214,19 @@ object AggregateService:
     ]]
   ):
     def store[R, E, A](
-      f: AggregateStore.Service[Id_, Meta_, EventData_] => ZIO[R, E, A]
+      f: AggregateStore[Id_, Meta_, EventData_] => ZIO[R, E, A]
     ) =
       ZIO
-        .accessM[Has[
-          AggregateService.Service[Agg] {
-            type Id = Id_
-            type Meta = Meta_
-            type EventData = EventData_
-            type Command = Command_
-          }
-        ] & R](_.get.store(f))
-        .asInstanceOf[ZIO[AggregateService[
-          Agg
-        ] & R, E, A]]
+        .environmentWithZIO[
+          AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_] & R
+        ](
+          _.get[AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]]
+            .store(f)
+        )
+        .asInstanceOf[ZIO[AggregateService[Agg] & R, E, A]]
 
     def viewStore[R, E, A](
-      f: AggregateViewStore.SchemalessService[
+      f: AggregateViewStore.Schemaless[
         Id_,
         Meta_,
         Agg,
@@ -194,14 +234,13 @@ object AggregateService:
         Agg *: EmptyTuple
       ] => ZIO[R, E, A]
     ) = ZIO
-      .accessM[Has[
-        AggregateService.Service[Agg] {
-          type Id = Id_
-          type Meta = Meta_
-          type EventData = EventData_
-          type Command = Command_
-        }
-      ] & R](_.get.viewStore(f))
+      .environmentWithZIO[
+        AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_] & R
+      ](
+        _.get[
+          AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]
+        ].viewStore(f)
+      )
       .asInstanceOf[ZIO[AggregateService[
         Agg
       ] & R, E, A]]
@@ -210,15 +249,9 @@ object AggregateService:
       id: Id_
     ): ZIO[AggregateService[Agg], Throwable, Agg] =
       ZIO
-        .accessM[Has[
-          AggregateService.Service[Agg] {
-            type Id = Id_
-            type Meta = Meta_
-
-            type EventData = EventData_
-            type Command = Command_
-          }
-        ]](
+        .environmentWithZIO[
+          AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]
+        ](
           _.get.get(id)
         )
         .asInstanceOf[ZIO[AggregateService[
@@ -235,14 +268,9 @@ object AggregateService:
       Throwable,
       Unit
     ] = ZIO
-      .accessM[Has[
-        AggregateService.Service[Agg] {
-          type Id = Id_
-          type Meta = Meta_
-          type EventData = EventData_
-          type Command = Command_
-        }
-      ]](
+      .environmentWithZIO[
+        AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]
+      ](
         _.get.exec(id, meta, createdBy, cmd)
       )
       .asInstanceOf[ZIO[AggregateService[
@@ -258,14 +286,9 @@ object AggregateService:
       Throwable,
       Id_
     ] = ZIO
-      .accessM[Has[
-        AggregateService.Service[Agg] {
-          type Id = Id_
-          type Meta = Meta_
-          type EventData = EventData_
-          type Command = Command_
-        }
-      ]](
+      .environmentWithZIO[
+        AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]
+      ](
         _.get.create(meta, createdBy, cmd)
       )
       .asInstanceOf[ZIO[AggregateService[
@@ -282,14 +305,9 @@ object AggregateService:
       Throwable,
       Unit
     ] = ZIO
-      .accessM[Has[
-        AggregateService.Service[Agg] {
-          type Id = Id_
-          type Meta = Meta_
-          type EventData = EventData_
-          type Command = Command_
-        }
-      ]](
+      .environmentWithZIO[
+        AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]
+      ](
         _.get.update(id, meta, createdBy, cmd)
       )
       .asInstanceOf[ZIO[AggregateService[

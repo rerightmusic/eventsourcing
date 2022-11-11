@@ -23,15 +23,9 @@ import shared.time.all.*
 import zio.Task
 import zio.ZLayer
 import zio.interop.catz.*
-import zio.logging.{Logger, Logging}
-
 import shared.uuid.all.*
 import scala.concurrent.duration.DurationInt
-
-import izumi.reflect.Tag
-import zio.{Has, ZIO, ZEnv}
-import zio.clock.Clock
-import zio.blocking.Blocking
+import zio.ZIO
 import shared.postgres.schemaless.PostgresDocument
 import cats.arrow.FunctionK
 import zio.RIO
@@ -39,8 +33,7 @@ import scala.concurrent.duration.FiniteDuration
 import fs2.{Stream, Pipe}
 import fs2.Stream._
 import org.postgresql.PGNotification
-import eventsourcing.domain
-import zio.duration.Duration
+import zio.Duration
 
 object PostgresAggregateStores:
   def live[
@@ -74,13 +67,16 @@ object PostgresAggregateStores:
     ttMeta: TypeName[Meta],
     codEv: JsonCodec[EventData],
     ttEv: TypeName[EventData],
-    tId: Tag[Id],
-    tMeta: Tag[DomMeta],
-    tEv: Tag[DomEventData],
-    tAgg: Tag[DomAgg],
-    tName: Tag[Name]
-  ) =
-    ZLayer.identity[Has[WithTransactor[Name]] & Logging & ZEnv] >+>
+    tName: zio.Tag[Name],
+    tId: zio.Tag[Id],
+    tDomMeta: zio.Tag[DomMeta],
+    tDomEventData: zio.Tag[DomEventData],
+    tMap: zio.Tag[Map[Id, Schemaless[Id, DomMeta, DomAgg]]],
+    tAggs: zio.Tag[DomAgg *: EmptyTuple]
+  ): zio.ZLayer[WithTransactor[Name], Throwable, WithTransactor[
+    Name
+  ] & AggregateStore[Id, DomMeta, DomEventData] & AggregateViewStore.Schemaless[Id, DomMeta, DomAgg, Id, DomAgg *: EmptyTuple]] =
+    ZLayer.environment[WithTransactor[Name]] >+>
       aggregateStore[
         Name,
         DomAgg,
@@ -131,20 +127,27 @@ object PostgresAggregateStores:
     en2: JsonEncoder[EventData],
     dec2: JsonDecoder[EventData],
     tt2: TypeName[EventData],
-    tag: Tag[AggregateStore.Service[Id, DomMeta, DomEventData]],
-    tag2: Tag[WithTransactor[Name]]
-  ) = ZLayer
-    .fromServices[WithTransactor[Name], Logger[
-      String
-    ], Clock.Service, Blocking.Service, AggregateStore.Service[
+    tName: zio.Tag[Name],
+    tId: zio.Tag[Id],
+    tDomMeta: zio.Tag[DomMeta],
+    tDomEventData: zio.Tag[DomEventData],
+    tStore: zio.Tag[AggregateStore[
       Id,
       DomMeta,
       DomEventData
-    ]]((txn, log, clock, blocking) =>
-      new AggregateStore.Service[Id, DomMeta, DomEventData]:
-        val getNotifyChannel =
-          s"${schema}_${camelToUnderscores(agg.storeName)}"
-
+    ]]
+  ): ZLayer[WithTransactor[Name], Throwable, AggregateStore[
+    Id,
+    DomMeta,
+    DomEventData
+  ]] =
+    ZLayer.fromZIO[WithTransactor[Name], Throwable, AggregateStore[
+      Id,
+      DomMeta,
+      DomEventData
+    ]](
+      for transactor <- WithTransactor.transactor[Name]
+      yield new AggregateStore[Id, DomMeta, DomEventData]:
         val tableName =
           schema + "." + camelToUnderscores(agg.storeName)
 
@@ -162,14 +165,14 @@ object PostgresAggregateStores:
         ) =
           (sql"""SELECT ${readCols.frPGDocStar} FROM ${Fragment.const(
             tableName
-          )} WHERE deleted = false AND ${rangeFragment(
+          )} WHERE schema_version = ${agg.schemaVersion} AND schema_version = ${agg.schemaVersion} AND deleted = false AND ${rangeFragment(
             from,
             to
           )} ORDER BY sequence_id""")
-            .query[ReadPostgresDocument[Id, Meta, EventData]]
+            .query[ReadEventPostgresDocument[Id, Meta, EventData]]
             .stream
             .chunkN(5000)
-            .transact[Task](txn.transactor)
+            .transact[Task](transactor)
             .evalMap(_.traverse(x => ZIO.fromEither(docToEvent(x))))
 
         def streamEventsForIdsFrom(
@@ -178,16 +181,16 @@ object PostgresAggregateStores:
           ids: NonEmptyList[Id]
         ) = (sql"""SELECT ${readCols.frPGDocStar} FROM ${Fragment.const(
           tableName
-        )} WHERE deleted = false AND ${Filter
+        )} WHERE schema_version = ${agg.schemaVersion} AND schema_version = ${agg.schemaVersion} AND deleted = false AND ${Filter
           .textFieldInArray(
             "id",
             ids.map(ex2.from(_).toString).toList
           )
           .fragment} AND ${rangeFragment(from, to)} ORDER BY sequence_id""")
-          .query[ReadPostgresDocument[Id, Meta, EventData]]
+          .query[ReadEventPostgresDocument[Id, Meta, EventData]]
           .stream
           .chunkN(5000)
-          .transact[Task](txn.transactor)
+          .transact[Task](transactor)
           .evalMap(_.traverse(x => ZIO.fromEither(docToEvent(x))))
 
         def persistEventsForId(
@@ -210,12 +213,13 @@ object PostgresAggregateStores:
                   nextVersion <- getNextVersion(id)
                   docs <- evs.zipWithIndex.traverse((ev, idx) =>
                     for evData <- ZIO.fromEither(toEventData(ev._4))
-                    yield WritePostgresDocument(
+                    yield WriteEventPostgresDocument(
                       ev._1,
                       toMeta(ev._2),
                       ev._3,
                       now,
                       nextVersion + idx,
+                      agg.schemaVersion,
                       false,
                       evData
                     )
@@ -223,32 +227,66 @@ object PostgresAggregateStores:
                 yield docs
               )
               .map(_.flatten)
-            _ <-
-              insertInto(tableName, docs)
-                .transact[Task](txn.transactor)
-                .unit
+            _ <- (for
+              _ <- sql"""LOCK TABLE ${Fragment.const(
+                tableName
+              )} IN exclusive mode""".update.run
+              _ <- insertInto(tableName, docs)
+            yield ()).transact[Task](transactor)
           yield ()
+
+        def persistEventsWithTransaction[A](
+          events: NonEmptyList[Event[Id, DomMeta, DomEventData]],
+          f: (persist: () => ConnectionIO[Unit]) => ConnectionIO[A]
+        ) =
+          for
+            events_ <- events.traverse(ev =>
+              for evData <- ZIO.fromEither(toEventData(ev.data))
+              yield WriteEventPostgresDocument(
+                ev.id,
+                toMeta(ev.meta),
+                ev.createdBy,
+                ev.created,
+                ev.version,
+                ev.schemaVersion,
+                ev.deleted,
+                evData
+              )
+            )
+            res <- f(() =>
+              for
+                _ <- sql"""LOCK TABLE ${Fragment.const(
+                  tableName
+                )} IN exclusive mode""".update.run
+                _ <- insertInto(
+                  tableName,
+                  events_
+                )
+              yield ()
+            )
+              .transact[Task](transactor)
+          yield res
 
         def getNextVersion(id: Id) =
           (sql"""SELECT MAX(version) FROM ${Fragment.const(
             tableName
-          )} WHERE deleted = false AND id = ${id}""")
+          )} WHERE schema_version = ${agg.schemaVersion} AND deleted = false AND id = ${id}""")
             .query[Option[Int]]
             .unique
-            .transact[Task](txn.transactor)
+            .transact[Task](transactor)
             .map(_.fold(1)(x => x + 1))
 
         def getLastSequenceId =
           (sql"""SELECT MAX(sequence_id) FROM ${Fragment.const(
             tableName
-          )} WHERE deleted = false""")
+          )} WHERE schema_version = ${agg.schemaVersion} AND deleted = false""")
             .query[Option[Int]]
             .unique
-            .transact[Task](txn.transactor)
+            .transact[Task](transactor)
             .map(_.fold(SequenceId(0))(x => SequenceId(x)))
 
         def docToEvent(
-          doc: ReadPostgresDocument[Id, Meta, EventData]
+          doc: ReadEventPostgresDocument[Id, Meta, EventData]
         ) = for data <- fromEventData(doc.id, doc.data)
         yield Event(
           sequenceId = doc.sequenceId,
@@ -257,6 +295,7 @@ object PostgresAggregateStores:
           createdBy = doc.createdBy,
           created = doc.created,
           version = doc.version,
+          schemaVersion = doc.schemaVersion,
           deleted = doc.deleted,
           data = data
         )

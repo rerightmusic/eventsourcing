@@ -11,12 +11,11 @@ import shared.principals.*
 import doobie.util.transactor.Transactor
 import zio.Task
 import scala.util.Random
-import zio.{ZIO, Runtime, ZEnv, Has}
-import zio.blocking.Blocking
+import zio.{ZIO, Runtime}
 import shared.logging.all.*
 import scala.util.Properties
 import shared.data.all.*
-import shared.config.{all as Conf}
+import shared.config.{all as Conf, Env}
 import java.io.File
 
 def insertData(
@@ -33,6 +32,7 @@ def insertData(
       PrincipalId("principal"),
       PrincipalId("principal"),
       d,
+      1,
       false,
       OffsetDateTime.now,
       OffsetDateTime.now
@@ -48,14 +48,12 @@ def insertData(
 
 def randomString = Random.alphanumeric.filter(_.isLetter).take(10).mkString
 
-def runSync[E <: Throwable, A](zio: ZIO[ZEnv, E, A]) = Runtime.default
-  .unsafeRunSync(zio)
-  .fold(
-    e => throw e.squash,
-    a => a
-  )
+def runSync[E <: Throwable, A](_zio: ZIO[zio.Scope, E, A]) =
+  zio.Unsafe.unsafe { implicit u =>
+    Runtime.default.unsafe.run(ZIO.scoped(_zio)).getOrThrowFiberFailure()
+  }
 
-val preConfEnv = Logging.console("test")
+val preConfEnv = defaultLogger("test")
 val pgConfig = runSync(for
   _ <- ZIO.unit
   envFile = Properties
@@ -63,15 +61,15 @@ val pgConfig = runSync(for
     .getOrElse(s"${System.getProperty("user.dir")}/../tests.env")
   envVars <- Conf
     .getEnvVars(List(new File(envFile)))
-    .provideCustomLayer(preConfEnv)
+    .provideLayer(preConfEnv)
   pgConfig <- PostgresConfig.fromEnv["Test"](envVars)
 yield pgConfig)
 
 def transact[A](f: Transactor[Task] => Task[A]) =
   runSync(for
-    te <- ZIO.access[Blocking](_.get.blockingExecutor.asEC)
+    te <- ZIO.executor.map(_.asExecutionContext)
     layer = preConfEnv >>> WithTransactor.live(pgConfig, te)
     res <- ZIO
-      .accessM[Has[WithTransactor["Test"]]](x => f(x.get.transactor))
+      .environmentWithZIO[WithTransactor["Test"]](x => f(x.get.transactor))
       .provideLayer(layer)
   yield res)

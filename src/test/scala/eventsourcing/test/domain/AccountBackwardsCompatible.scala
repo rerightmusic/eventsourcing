@@ -8,7 +8,7 @@ import java.util.UUID
 
 import shared.newtypes.NewExtractor
 
-object AccountV2:
+object AccountBackwardsCompatible:
   type AccountEvent = AccountCreated | AccountPasswordUpdated |
     AccountEmailUpdated
   case class AccountCreated(
@@ -54,7 +54,8 @@ object AccountV2:
         type EventData = AccountEvent
         type Command = CreateAccount | UpdateEmail | UpdatePassword
 
-        def storeName = "accounts"
+        val storeName = "accounts"
+        val schemaVersion = 1
         def aggregate = (x, ev) =>
           (x, ev.data) match
             case (

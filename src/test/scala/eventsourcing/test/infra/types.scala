@@ -2,6 +2,7 @@ package eventsourcing.test.infra
 
 import shared.json.all.{given, *}
 import eventsourcing.test.domain as D
+import cats.data.NonEmptyList
 
 sealed trait AccountEvent derives JsonCodec
 object AccountEvent:
@@ -18,7 +19,7 @@ case class AccountData(
   previousEmails: List[String]
 ) derives JsonCodec
 
-object AccountV2:
+object AccountBackwardsCompatible:
   sealed trait AccountEvent derives JsonCodec
   object AccountEvent:
     case class AccountCreated(
@@ -39,6 +40,21 @@ object AccountV2:
     previousEmails: List[String],
     newPasswordField: Option[String],
     newEmailField: Option[String]
+  ) derives JsonCodec
+
+object AccountBackwardsIncompatible:
+  sealed trait AccountEvent derives JsonCodec
+  object AccountEvent:
+    case class AccountCreated(emails: NonEmptyList[String], password: String)
+        extends AccountEvent
+    case class AccountPasswordUpdated(password: String) extends AccountEvent
+    case class AccountEmailsUpdated(emails: NonEmptyList[String])
+        extends AccountEvent
+  case class AccountData(
+    id: D.AccountId,
+    emails: NonEmptyList[String],
+    password: String,
+    previousEmails: List[String]
   ) derives JsonCodec
 
 sealed trait ProfileEvent derives JsonCodec

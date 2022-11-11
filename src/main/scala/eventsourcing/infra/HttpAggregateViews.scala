@@ -17,11 +17,9 @@ import shared.health.HealthService
 import zio.{ZIO, Task, Ref}
 import zio.Fiber
 import shared.health.HealthCheck
-import izumi.reflect.Tag
 import org.http4s.blaze.server.BlazeServerBuilder
 import scala.concurrent.duration.*
 import org.http4s.server.Router
-import shared.logging.all.Logging
 import shared.json.all.{*, given}
 import shared.http.all.{*, given}
 import cats.syntax.all.*
@@ -34,8 +32,7 @@ abstract class ViewOps[R]:
   def isCaughtUp: RIO[R, Boolean]
   def run: RIO[R, Unit]
 
-trait HttpAggregateViews[Aggs <: Tuple, R <: Logging]
-    extends Http4sDsl[RIO[R, *]]:
+trait HttpAggregateViews[Aggs <: Tuple, R] extends Http4sDsl[RIO[R, *]]:
   val cors = CORS.policy.withAllowOriginAll.withAllowCredentials(false)
 
   // Change to map
@@ -81,14 +78,14 @@ trait HttpAggregateViews[Aggs <: Tuple, R <: Logging]
                     case GET -> Root / "reset" =>
                       for
                         _ <- v.reset
-                        _ <- Logging.info(s"${v.name} was reset")
+                        _ <- ZIO.logInfo(s"${v.name} was reset")
                         res <- Ok(
                           Map("message" -> s"Reset ${v.name}").toJsonASTOrFail
                         )
                       yield res
                   })
                 )) ++ List("/" -> (HttpRoutes.of[RIO[R, *]] {
-                case req @ GET -> Root =>
+                case req @ GET -> Root / "health" =>
                   for
                     ref_ <- ref.get
                     res <- Ok(
@@ -139,9 +136,9 @@ trait HttpAggregateViews[Aggs <: Tuple, R <: Logging]
             )
           ).orNotFound
         )
-        .serve
-        .compile
-        .drain
+        .resource
+        .toManagedZIO
+        .useForever
         .fork
       fibers <- viewOps
         .traverse(v => v.run.fork.map(v.name -> _))
@@ -153,33 +150,37 @@ trait HttpAggregateViews[Aggs <: Tuple, R <: Logging]
 object HttpAggregateViews:
   def apply[Aggs <: NonEmptyTuple] = new HttpAggregateViewsDsl[Aggs]
   class HttpAggregateViewsDsl[Aggs <: NonEmptyTuple]:
-    def run[R <: Logging](using
+    def run[R](using
       r: HttpAggregateViews[Aggs, R]
     ) =
       r.run
 
-  given empty[R <: Logging]: HttpAggregateViews[EmptyTuple, R] =
+  given empty[R]: HttpAggregateViews[EmptyTuple, R] =
     new HttpAggregateViews[EmptyTuple, R]:
       def viewOps = List()
 
   given views[
     View,
     Rest <: Tuple,
-    R <: AggregateViewService[View] & Logging
+    R <: AggregateViewService[View]
   ](using
     view: AggregateViewClass[View],
     rest: HttpAggregateViews[Rest, R],
-    t: Tag[
-      AggregateViewService.Service[View] {
-        type ActualView = view.ActualView
-        type Query = view.Query
-        type Aggregates = view.Aggregates
-      }
+    tSvc: zio.Tag[
+      AggregateViewService.Aux[
+        View,
+        view.ActualView,
+        view.Query,
+        view.Aggregates
+      ]
+    ],
+    tStore: zio.Tag[
+      AggregateViewStore[view.ActualView, view.Query, view.Aggregates]
     ]
   ): HttpAggregateViews[View *: Rest, R] =
     new HttpAggregateViews[View *: Rest, R]:
       def viewOps: List[ViewOps[R]] = new ViewOps {
-        def name: String = view.instance.storeName
+        def name: String = view.instance.versionedStoreName
         def reset: RIO[R, Unit] =
           AggregateViewService[View].store(_.resetAggregateView)
         def health: RIO[R, HealthCheck] =
