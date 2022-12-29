@@ -1,7 +1,7 @@
 package eventsourcing.domain.update
 
 import types.*
-import scala.quoted._
+import scala.quoted.*
 import scala.util.control.NonFatal
 import shared.macros.all.*
 import shared.data.automapper.all.*
@@ -15,7 +15,7 @@ def materializeNonDynamicUpdate[T, U](
 def materializeDynamicUpdate[T, U](target: Expr[T], update: Expr[U])(
   dynamicParams: Expr[Seq[(String, Any)]]
 )(using targetType: Type[T], updateType: Type[U], quotes: Quotes): Expr[T] =
-  import quotes.reflect._
+  import quotes.reflect.*
   val dynamicNamedArgs = dynamicParams.asTerm match {
     case Inlined(None, Nil, Typed(Repeated(term, _), _)) => term
     case t => matchFailed("UpdateMacros Dynamic Arg", t)
@@ -46,7 +46,7 @@ def materializeUpdate[T, U](using
   targetType: Type[T],
   updateType: Type[U]
 ): Expr[T] =
-  import quotes.reflect._
+  import quotes.reflect.*
 
   val targetTypeRepr = TypeRepr.of[T]
   val updateTypeRepr = TypeRepr.of[U]
@@ -331,7 +331,7 @@ def materializeUpdate[T, U](using
 def fromEvent[Ev, T](using quotes: Quotes)(
   event: Expr[Ev]
 )(using targetType: Type[T], eventType: Type[Ev]): Expr[T] =
-  import quotes.reflect._
+  import quotes.reflect.*
   val eventTypeRepr = TypeRepr.of[Ev]
   val targetTypeRepr = TypeRepr.of[T]
   eventTypeRepr.asType match

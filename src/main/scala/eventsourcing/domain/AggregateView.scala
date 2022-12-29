@@ -113,7 +113,13 @@ object AggregateView:
           agg
             .aggregate(st.map(_.data), ev)
             .bimap(
-              err => AggregateViewError.InvalidAggregateView(st, ev, err.msg),
+              err =>
+                AggregateViewError.InvalidAggregateView(
+                  st,
+                  ev,
+                  agg.versionedStoreName,
+                  err.msg
+                ),
               v =>
                 state_.updated(
                   ev.id,
@@ -163,7 +169,8 @@ object AggregateView:
         if migratedAgg.schemaVersion != agg.schemaVersion - 1 then
           Left(
             AggregateViewError.RunAggregateViewError(
-              s"Incorrect schema version of migrated: ${migratedAgg.versionedStoreName} and agg: ${agg.versionedStoreName}"
+              s"Incorrect schema version of migrated: ${migratedAgg.versionedStoreName} and agg: ${agg.versionedStoreName}",
+              agg.versionedStoreName
             )
           )
         val state_ = state.getOrElse(List.empty)

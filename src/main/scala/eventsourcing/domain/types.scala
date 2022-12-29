@@ -18,17 +18,20 @@ object types:
   object AggregateError:
     case class AggregateMissing[Id](
       val id: Id,
+      val store: String,
       val message: Option[String] = None
     ) extends AggregateError(
-          s"Aggregate is missing ${id}${message.fold("")(m => s", ${m}")}"
+          s"Aggregate is missing ${id} on ${store}${message
+            .fold("")(m => s", ${m}")}"
         )
 
     case class InvalidAggregate[Agg, Id, Meta, EventData](
       val aggregate: Option[Agg],
       val event: Event[Id, Meta, EventData],
+      val store: String,
       val message: String
     ) extends AggregateError(
-          s"Aggregate: ${aggregate}, Event: ${event}, ${message}"
+          s"Aggregate: ${aggregate}, Event: ${event}, Store: ${store}, ${message}"
         )
 
   case class Event[Id, Meta, EventData](
@@ -49,20 +52,23 @@ object types:
     case class InvalidAggregateView[View, Ev](
       val view: Option[View],
       val event: Ev,
+      val storeName: String,
       val message: String
     ) extends AggregateViewError(
-          s"View: ${view}, Event: ${event}, ${message}"
+          s"View: ${view}, Event: ${event}, Store: ${storeName} ${message}"
         )
 
     case class AggregateViewMissing[Query](
       query: Query,
+      storeName: String,
       message: String = "Aggregate View is missing"
     ) extends AggregateViewError(
-          s"message: ${message}, query: ${query}"
+          s"message: ${message}, query: ${query}, store: ${storeName}"
         )
     case class RunAggregateViewError[Query](
-      message: String
-    ) extends AggregateViewError(s"message: ${message}")
+      message: String,
+      storeName: String
+    ) extends AggregateViewError(s"message: ${message}, store: ${storeName}")
 
   case class AggregateViewEvent[Aggregates <: NonEmptyTuple](
     name: String,
@@ -191,8 +197,7 @@ object types:
             agg.Meta,
             agg.EventData
           ] => Res1
-        )
-          *: Fs,
+        ) *: Fs,
         Res
       ] =
         new FnsApply[
@@ -203,8 +208,7 @@ object types:
               agg.Meta,
               agg.EventData
             ] => Res1
-          )
-            *: Fs,
+          ) *: Fs,
           Res
         ]:
           def apply(
@@ -214,8 +218,7 @@ object types:
                 agg.Meta,
                 agg.EventData
               ] => Res1
-            )
-              *: Fs,
+            ) *: Fs,
             ev: AggregateViewEvent[Agg *: Xs]
           ): Res = if ev.name === agg.versionedStoreName then
             val fns_ = fns.head

@@ -12,7 +12,6 @@ import zio.interop.catz.*
 import cats.syntax.all.*
 import shared.uuid.all.*
 import cats.data.NonEmptyList
-import zio.Ref
 import shared.principals.PrincipalId
 import zio.Fiber
 import zio.Schedule
@@ -25,7 +24,7 @@ import scala.concurrent.duration.*
 class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
 
   val RunBeforeAll = true
-  val RunAfterAll = false
+  val RunAfterAll = true
 
   override def beforeAll() = if !RunBeforeAll then ()
   else

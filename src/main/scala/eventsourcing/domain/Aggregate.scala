@@ -40,7 +40,7 @@ trait Aggregate[Agg]:
     event: Event[Id, Meta, EventData],
     message: String = "Invalid aggregate"
   ) = Left(
-    AggregateError.InvalidAggregate(agg, event, message)
+    AggregateError.InvalidAggregate(agg, event, versionedStoreName, message)
   )
 
   def reject[E](

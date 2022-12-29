@@ -39,14 +39,21 @@ object operations:
       Some(NonEmptyList.of(id))
     ).mapError {
       case _: AggregateViewError.AggregateViewMissing[?] =>
-        AggregateError.AggregateMissing(id)
+        AggregateError.AggregateMissing(
+          id,
+          agg.versionedStoreName
+        )
       case err => err
     }
     agg <- view.flatMap(_.get(id)) match
       case None =>
-        ZIO.fail[AggregateError](
-          AggregateError.AggregateMissing(id)
-        )
+        ZIO
+          .fail[AggregateError](
+            AggregateError.AggregateMissing(
+              id,
+              agg.versionedStoreName
+            )
+          )
       case Some(a) => ZIO.succeed(a.data)
   yield agg
 
@@ -212,7 +219,7 @@ object operations:
     .tapErrorCause(e =>
       for
         _ <- ZIO.logErrorCause(
-          s"Something went wrong with view ${aggView.instance.versionedStoreName}, ${e.prettyPrint}",
+          s"Error with view ${aggView.instance.versionedStoreName}",
           e
         )
         store <- ZIO
@@ -351,7 +358,10 @@ object operations:
                           )
                         )
                         r <- ZIO.fail[AggregateViewError](
-                          AggregateViewError.RunAggregateViewError(err)
+                          AggregateViewError.RunAggregateViewError(
+                            err,
+                            aggView.instance.versionedStoreName
+                          )
                         )
                       yield r
                     case Right(Some(a)) => ZIO.succeed(a)

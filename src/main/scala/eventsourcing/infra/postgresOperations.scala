@@ -17,7 +17,6 @@ import cats.effect.kernel.MonadCancelThrow
 import cats.effect.IO
 import org.postgresql.PGNotification
 import zio.Task
-import zio.stream.ZStream
 import doobie.Transactor
 import zio.Duration
 import doobie.*
@@ -28,14 +27,14 @@ import zio.interop.catz.*
 import shared.postgres.doobie.WithTransactor
 import shared.postgres.schemaless.operations.logHandler
 import fs2.{Stream, Pipe}
-import fs2.Stream._
+import fs2.Stream.*
 import scala.concurrent.duration.*
 import cats.effect.kernel.Resource
 import zio.interop.catz.implicits.*
 import eventsourcing.domain.types.SequenceId
 import zio.RIO
 import zio.ZIO
-import zio.managed._
+import zio.managed.*
 
 object postgresOperations:
   case class Cols(cols: List[String]):

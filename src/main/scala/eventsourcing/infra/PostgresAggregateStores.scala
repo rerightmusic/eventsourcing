@@ -31,7 +31,7 @@ import cats.arrow.FunctionK
 import zio.RIO
 import scala.concurrent.duration.FiniteDuration
 import fs2.{Stream, Pipe}
-import fs2.Stream._
+import fs2.Stream.*
 import org.postgresql.PGNotification
 import zio.Duration
 
