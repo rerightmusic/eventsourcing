@@ -1,18 +1,6 @@
 package eventsourcing.test.domain
 
 import eventsourcing.all.*
-import shared.json.all.{*, given}
-import cats.data.NonEmptyList
-import doobie.util.update.Update
-import zio.Task
-import doobie.*
-import doobie.implicits.*
-import cats.syntax.all.*
-import shared.postgres.all.{given, *}
-import zio.interop.catz.*
-import fs2.Chunk
-import zio.ZIO
-import zio.RIO
 
 case class AccountDetails(
   email: Option[String],

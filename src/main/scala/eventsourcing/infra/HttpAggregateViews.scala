@@ -2,7 +2,6 @@ package eventsourcing.infra
 
 import org.http4s.HttpRoutes
 import zio.RIO
-import org.http4s.server.middleware.CORSPolicy
 import eventsourcing.domain.AggregateViewClass
 import eventsourcing.domain.AggregateViewService
 import eventsourcing.domain.AggregateViewStore
@@ -11,10 +10,8 @@ import org.http4s.server.middleware.CORS
 import org.http4s.dsl.Http4sDsl
 import zio.interop.catz.*
 import zio.interop.catz.implicits.*
-import cats.arrow.FunctionK
-import cats.data.OptionT
 import shared.health.HealthService
-import zio.{ZIO, Task, Ref}
+import zio.{ZIO, Ref}
 import zio.Fiber
 import shared.health.HealthCheck
 import org.http4s.blaze.server.BlazeServerBuilder

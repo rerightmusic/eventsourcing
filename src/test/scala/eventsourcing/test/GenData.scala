@@ -9,7 +9,6 @@ import java.util.UUID
 import cats.syntax.all.*
 import zio.interop.catz.*
 import scala.util.Random
-import fs2.Chunk
 
 def randomString =
   Random.alphanumeric.filter(_.isLetter).take(Random.nextInt(5) + 7).mkString

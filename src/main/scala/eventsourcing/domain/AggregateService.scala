@@ -1,14 +1,11 @@
 package eventsourcing.domain
 
-import cats.data.NonEmptyList
 import types.*
-import cats.syntax.all.*
 import zio.ZIO
 import shared.newtypes.NewExtractor
 import shared.principals.PrincipalId
 import java.util.UUID
 import zio.Task
-import zio.ZEnvironment
 import zio.ZLayer
 
 trait AggregateService[Agg]:
@@ -31,6 +28,7 @@ trait AggregateService[Agg]:
   ): ZIO[R, E, A]
 
   def get(id: Id): Task[Agg]
+  def exists(id: Id): Task[Boolean]
   def exec(
     id: Id,
     meta: Meta,
@@ -109,8 +107,7 @@ object AggregateService:
           Agg
         ]
       ](
-        for
-          env <- ZIO.environment[
+        for env <- ZIO.environment[
             AggregateStore[
               agg.Id,
               agg.Meta,
@@ -161,6 +158,12 @@ object AggregateService:
             id: Id
           ): Task[Agg] = operations
             .getAggregate[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command](id)
+            .provideEnvironment(env)
+
+          def exists(
+            id: Id
+          ): Task[Boolean] = operations
+            .exists[Agg, agg.Id, agg.Meta, agg.EventData, agg.Command](id)
             .provideEnvironment(env)
 
           def exec(
@@ -257,6 +260,19 @@ object AggregateService:
         .asInstanceOf[ZIO[AggregateService[
           Agg
         ], Throwable, Agg]]
+
+    def exists(
+      id: Id_
+    ): ZIO[AggregateService[Agg], Throwable, Boolean] =
+      ZIO
+        .environmentWithZIO[
+          AggregateService.Aux[Agg, Id_, Meta_, EventData_, Command_]
+        ](
+          _.get.exists(id)
+        )
+        .asInstanceOf[ZIO[AggregateService[
+          Agg
+        ], Throwable, Boolean]]
 
     def exec(
       id: Id_,

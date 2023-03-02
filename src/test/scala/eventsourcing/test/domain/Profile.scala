@@ -1,12 +1,9 @@
 package eventsourcing.test.domain
 
 import cats.data.NonEmptyList
-import java.time.OffsetDateTime
 import eventsourcing.all.*
 import shared.newtypes.NewtypeWrapped
 import java.util.UUID
-
-import shared.newtypes.NewExtractor
 
 type ProfileEvent = ProfileCreated | ProfileLastNameUpdated |
   ProfileFirstNameUpdated

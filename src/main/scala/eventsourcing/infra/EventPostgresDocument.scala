@@ -3,7 +3,7 @@ package eventsourcing.infra
 import shared.postgres.all.given
 import shared.newtypes.NewExtractor
 import shared.principals.PrincipalId
-import _root_.doobie.util.{Read, Put, Get, Write}
+import _root_.doobie.util.{Read, Write}
 import org.tpolecat.typename.TypeName
 import java.util.UUID
 import java.time.OffsetDateTime

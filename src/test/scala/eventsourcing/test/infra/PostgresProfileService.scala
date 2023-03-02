@@ -1,15 +1,9 @@
 package eventsourcing.test.infra
 
 import eventsourcing.test.domain as D
-import zio.ULayer
 import shared.postgres.all.{*, given}
-import zio.{ZLayer}
 import eventsourcing.all.*
-import shared.principals.PrincipalId
-import cats.data.NonEmptyList
-import shared.data.all.{*, given}
-import zio.{EnvironmentTag => Tag}
-import shared.json.all.given
+import shared.data.all.*
 import zio.durationInt
 
 object PostgresProfileService:

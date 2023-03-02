@@ -1,14 +1,9 @@
 package eventsourcing.domain
 
 import types.*
-import zio.UIO
 import cats.data.NonEmptyList
 import zio.Task
-import zio.IO
-import shared.principals.PrincipalId
-import zio.{RIO, ZLayer}
 import fs2.*
-import zio.interop.catz.*
 import zio.ZIO
 import shared.health.HealthCheck
 

@@ -9,7 +9,7 @@ import eventsourcing.domain.generics.Unwrap
 import cats.data.NonEmptyList
 import doobie.*
 import zio.ZLayer
-import shared.postgres.all.{*, given}
+import shared.postgres.all.*
 import shared.newtypes.NewExtractor
 import java.util.UUID
 import shared.json.all.*

@@ -1,7 +1,6 @@
 package eventsourcing.domain.update
 
 import types.*
-import shared.data.automapper.*
 import cats.data.NonEmptyList
 
 val source =

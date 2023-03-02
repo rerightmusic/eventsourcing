@@ -11,16 +11,13 @@ import eventsourcing.domain.Aggregate
 import shared.postgres.all.{*, given}
 import shared.data.all.*
 import shared.time.all.*
-import shared.health.HealthCheck
 import zio.ZLayer
 import zio.ZIO
 import fs2.Stream
-import cats.data.NonEmptyList
 import zio.Duration
 import doobie.*
 import doobie.implicits.*
 import cats.syntax.all.*
-import doobie.free.connection.{raiseError, pure}
 import cats.free.Free
 import zio.Task
 import fs2.Chunk
@@ -188,40 +185,40 @@ object PostgresMigrationAggregateViewStore:
             _.sequenceIds
           ) ++ status.sequenceIds
           _ <- (sql"""INSERT INTO ${Fragment.const(
-            aggViewsTableName
-          )} (name, status, last_updated) VALUES (${aggView.versionedStoreName}, ${status
-            .copy(
-              sequenceIds = newSequenceIds,
-              longestDuration = List(
-                status.catchupDuration.orElse(
+              aggViewsTableName
+            )} (name, status, last_updated) VALUES (${aggView.versionedStoreName}, ${status
+              .copy(
+                sequenceIds = newSequenceIds,
+                longestDuration = List(
+                  status.catchupDuration.orElse(
+                    oldStatus.flatMap(_.catchupDuration)
+                  ),
+                  status.syncDuration.orElse(oldStatus.flatMap(_.syncDuration))
+                ).flatten.maxOption,
+                longestEventsSize = List(
+                  status.catchupEventsSize.orElse(
+                    oldStatus.flatMap(_.catchupEventsSize)
+                  ),
+                  status.syncEventsSize.orElse(
+                    oldStatus.flatMap(_.syncEventsSize)
+                  )
+                ).flatten.maxOption,
+                catchupDuration = status.catchupDuration.orElse(
                   oldStatus.flatMap(_.catchupDuration)
                 ),
-                status.syncDuration.orElse(oldStatus.flatMap(_.syncDuration))
-              ).flatten.maxOption,
-              longestEventsSize = List(
-                status.catchupEventsSize.orElse(
+                catchupEventsSize = status.catchupEventsSize.orElse(
                   oldStatus.flatMap(_.catchupEventsSize)
                 ),
-                status.syncEventsSize.orElse(
+                syncDuration =
+                  status.syncDuration.orElse(oldStatus.flatMap(_.syncDuration)),
+                syncEventsSize = status.syncEventsSize.orElse(
                   oldStatus.flatMap(_.syncEventsSize)
-                )
-              ).flatten.maxOption,
-              catchupDuration = status.catchupDuration.orElse(
-                oldStatus.flatMap(_.catchupDuration)
-              ),
-              catchupEventsSize = status.catchupEventsSize.orElse(
-                oldStatus.flatMap(_.catchupEventsSize)
-              ),
-              syncDuration =
-                status.syncDuration.orElse(oldStatus.flatMap(_.syncDuration)),
-              syncEventsSize = status.syncEventsSize.orElse(
-                oldStatus.flatMap(_.syncEventsSize)
-              ),
-              error = status.error
-            )
-            .auto
-            .to[AggregateViewStatus]
-            .toJsonASTOrFail}, $currTime) """ ++
+                ),
+                error = status.error
+              )
+              .auto
+              .to[AggregateViewStatus]
+              .toJsonASTOrFail}, $currTime) """ ++
             sql"""ON CONFLICT (name) DO UPDATE SET status = EXCLUDED.status, last_updated = EXCLUDED.last_updated""").update.run
             .map(_ => ())
         yield ()
@@ -235,18 +232,18 @@ object PostgresMigrationAggregateViewStore:
 
         private def lockTablesM = for
           _ <- sql"""LOCK TABLE ${Fragment.const(
-            tableName
-          )} IN exclusive mode""".update.run
+              tableName
+            )} IN exclusive mode""".update.run
           _ <- lockAggregateViewStatusTableM
         yield ()
 
         private def lockAggregateViewStatusTableM = for
           _ <- sql"""LOCK TABLE ${Fragment.const(
-            aggViewsTableName
-          )} IN row exclusive mode""".update.run
+              aggViewsTableName
+            )} IN row exclusive mode""".update.run
           _ <- sql"""SELECT 1 FROM ${Fragment.const(
-            aggViewsTableName
-          )} WHERE name = ${aggView.versionedStoreName} FOR UPDATE"""
+              aggViewsTableName
+            )} WHERE name = ${aggView.versionedStoreName} FOR UPDATE"""
             .query[Int]
             .option
         yield ()
@@ -292,8 +289,8 @@ object PostgresMigrationAggregateViewStore:
 
         def readAggregateViewStatusM =
           sql"""SELECT status, last_updated from ${Fragment.const(
-            aggViewsTableName
-          )} where name = ${aggView.versionedStoreName}"""
+              aggViewsTableName
+            )} where name = ${aggView.versionedStoreName}"""
             .query[(Json, OffsetDateTime)]
             .option
             .map(
@@ -363,10 +360,10 @@ object PostgresMigrationAggregateViewStore:
                 ZIO.fail(
                   new Exception(
                     s"""Aggregate view withCaughtUp timed out after ${catchUpTimeout.toSeconds} secs, Status: ${ready._2
-                      .map(
-                        _.sequenceIds
-                      )}, Last Seq Ids: ${ready._3}${failMessage
-                      .fold("")(x => s", ${x}")}
+                        .map(
+                          _.sequenceIds
+                        )}, Last Seq Ids: ${ready._3}${failMessage
+                        .fold("")(x => s", ${x}")}
 
 ${stackErs}"""
                   )

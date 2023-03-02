@@ -2,21 +2,20 @@ package eventsourcing.domain
 
 import cats.data.NonEmptyList
 import types.*
-import zio.{ZIO, Task}
-import zio.IO
+import zio.ZIO
 import zio.interop.catz.*
 import cats.syntax.all.*
 import shared.principals.PrincipalId
 import shared.newtypes.NewExtractor
 import shared.uuid.all.*
-import shared.logging.all.*
 import shared.time.all.*
+import shared.error.all.*
 import fs2.*
-import scala.concurrent.duration.DurationInt
 import org.postgresql.util.PSQLException
 import zio.Schedule
 import zio.*
 
+import shared.error.all
 object operations:
   def getAggregate[Agg, Id, Meta, EventData, Command](using
     agg: Aggregate.Aux[Agg, Id, Meta, EventData, Command],
@@ -55,6 +54,39 @@ object operations:
             )
           )
       case Some(a) => ZIO.succeed(a.data)
+  yield agg
+
+  def exists[Agg, Id, Meta, EventData, Command](using
+    agg: Aggregate.Aux[Agg, Id, Meta, EventData, Command],
+    tId: zio.Tag[Id],
+    tMeta: zio.Tag[Meta],
+    tEventData: zio.Tag[EventData],
+    tSchemaless: zio.Tag[Schemaless[agg.Id, agg.Meta, Agg]],
+    tAgg: zio.Tag[Agg]
+  )(
+    id: Id
+  ): ZIO[
+    AggregateStore[Id, Meta, EventData] &
+      AggregateViewStore.Schemaless[Id, Meta, Agg, Id, Agg *: EmptyTuple],
+    Throwable,
+    Boolean
+  ] = for
+    view <- getAggregateView[Map[Id, Schemaless[Id, Meta, Agg]], NonEmptyList[
+      Id
+    ], Agg *: EmptyTuple](
+      Some(NonEmptyList.of(id))
+    ).mapError {
+      case _: AggregateViewError.AggregateViewMissing[?] =>
+        AggregateError.AggregateMissing(
+          id,
+          agg.versionedStoreName
+        )
+      case err => err
+    }
+    agg <- view.flatMap(_.get(id)) match
+      case None =>
+        ZIO.succeed(false)
+      case Some(_) => ZIO.succeed(true)
   yield agg
 
   def runCreateCommand[Agg](using
@@ -218,7 +250,7 @@ object operations:
   ] = runAggregateView_(mode, subscribe)
     .tapErrorCause(e =>
       for
-        _ <- ZIO.logErrorCause(
+        _ <- logErrorCauseSquashed(
           s"Error with view ${aggView.instance.versionedStoreName}",
           e
         )

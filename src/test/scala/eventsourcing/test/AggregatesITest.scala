@@ -6,15 +6,13 @@ import doobie.implicits.*
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.BeforeAndAfterAll
-import eventsourcing.all.*
-import zio.{ZIO, Runtime, Task}
+import zio.{ZIO, Task}
 import zio.interop.catz.*
 import cats.syntax.all.*
 import shared.uuid.all.*
 import cats.data.NonEmptyList
 import shared.principals.PrincipalId
 import zio.Fiber
-import zio.Schedule
 import zio.durationInt
 import shared.postgres.all.given
 import sttp.client3.httpclient.zio.HttpClientZioBackend
@@ -163,30 +161,39 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
 
   "http endpoints" should "work" in {
     runSync(
-      for _ <- fork(HttpAggregateViews[Account *: EmptyTuple].run(7999, "localhost"))
-          _ <- ZIO.sleep(2.seconds)
-          res <- ZIO
-            .environmentWithZIO[SttpBackend[Task, Any]](
-              _.get.send(
-                basicRequest.get(uri"http://localhost:7999/health").readTimeout(5.seconds)
-              )
-            ).provideLayer(
-              HttpClientZioBackend.layer(options =
-                SttpBackendOptions(connectionTimeout = 1.minute, None)
-              )
+      for
+        _ <- fork(
+          HttpAggregateViews[Account *: EmptyTuple].run(7999, "localhost")
+        )
+        _ <- ZIO.sleep(2.seconds)
+        res <- ZIO
+          .environmentWithZIO[SttpBackend[Task, Any]](
+            _.get.send(
+              basicRequest
+                .get(uri"http://localhost:7999/health")
+                .readTimeout(5.seconds)
             )
-          _ <- zassert(withClue(res)(res.body shouldBe Symbol("Right")))
-          res2 <- ZIO
-            .environmentWithZIO[SttpBackend[Task, Any]](
-              _.get.send(
-                basicRequest.get(uri"http://localhost:7999/accounts_view_v1").readTimeout(5.seconds)
-              )
-            ).provideLayer(
-              HttpClientZioBackend.layer(options =
-                SttpBackendOptions(connectionTimeout = 1.minute, None)
-              )
+          )
+          .provideLayer(
+            HttpClientZioBackend.layer(options =
+              SttpBackendOptions(connectionTimeout = 1.minute, None)
             )
-          _ <- zassert(withClue(res2)(res2.body shouldBe Symbol("Right")))
+          )
+        _ <- zassert(withClue(res)(res.body shouldBe Symbol("Right")))
+        res2 <- ZIO
+          .environmentWithZIO[SttpBackend[Task, Any]](
+            _.get.send(
+              basicRequest
+                .get(uri"http://localhost:7999/accounts_view_v1")
+                .readTimeout(5.seconds)
+            )
+          )
+          .provideLayer(
+            HttpClientZioBackend.layer(options =
+              SttpBackendOptions(connectionTimeout = 1.minute, None)
+            )
+          )
+        _ <- zassert(withClue(res2)(res2.body shouldBe Symbol("Right")))
       yield ()
     )
   }
@@ -361,13 +368,20 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
 
         acc <- Aggregate[AccountBackwardsCompatible.Account].get(id)
         _ <- zassert(
-          acc shouldBe AccountBackwardsCompatible.Account(id, lastEmail, prevEmails, None, None)
+          acc shouldBe AccountBackwardsCompatible.Account(
+            id,
+            lastEmail,
+            prevEmails,
+            None,
+            None
+          )
         )
 
         email = randomString
         _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible
+            .AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
           AccountBackwardsCompatible.UpdateEmail(email, randomString)
         )
@@ -376,21 +390,24 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         newEmailField2 = randomString
         _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible
+            .AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
           AccountBackwardsCompatible.UpdateEmail(email2, newEmailField2)
         )
 
         _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible
+            .AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
           AccountBackwardsCompatible.UpdatePassword(randomString)
         )
         newPassField = randomString
         _ <- Aggregate[AccountBackwardsCompatible.Account].update(
           id,
-          AccountBackwardsCompatible.AccountMeta(randomString, Some(randomString)),
+          AccountBackwardsCompatible
+            .AccountMeta(randomString, Some(randomString)),
           PrincipalId(randomString),
           AccountBackwardsCompatible.UpdatePassword(newPassField)
         )
@@ -1015,24 +1032,42 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
       )
       (id, lastEmail, lastPass, prevEmails, _) = acc1
       _ <- fork(AggregateView[Account].run(AggregateViewMode.Restart, true))
-      _ <- fork(AggregateView[AccountBackwardsIncompatible.Account].run(AggregateViewMode.Restart, true))
-      _ <- fork(AggregateView[AggregateMigration[AccountBackwardsIncompatible.Account]].run(AggregateViewMode.Restart, true))
+      _ <- fork(
+        AggregateView[AccountBackwardsIncompatible.Account]
+          .run(AggregateViewMode.Restart, true)
+      )
+      _ <- fork(
+        AggregateView[AggregateMigration[AccountBackwardsIncompatible.Account]]
+          .run(AggregateViewMode.Restart, true)
+      )
       acc2 <- createAccounts(5).map(
         _.head
       )
       (id2, lastEmail2, lastPass2, prevEmails2, _) = acc2
 
-      _ <- AggregateView[AggregateMigration[AccountBackwardsIncompatible.Account]].withCaughtUp(for
+      _ <- AggregateView[AggregateMigration[
+        AccountBackwardsIncompatible.Account
+      ]].withCaughtUp(for
         accRes <- Aggregate[AccountBackwardsIncompatible.Account].get(id)
         _ <- zassert(
-          accRes shouldBe AccountBackwardsIncompatible.Account(id, NonEmptyList.of(lastEmail),lastPass, prevEmails)
+          accRes shouldBe AccountBackwardsIncompatible.Account(
+            id,
+            NonEmptyList.of(lastEmail),
+            lastPass,
+            prevEmails
+          )
         )
 
         acc2Res <- Aggregate[AccountBackwardsIncompatible.Account].get(id2)
         _ <- zassert(
-          acc2Res shouldBe AccountBackwardsIncompatible.Account(id2, NonEmptyList.of(lastEmail2),lastPass2, prevEmails2)
+          acc2Res shouldBe AccountBackwardsIncompatible.Account(
+            id2,
+            NonEmptyList.of(lastEmail2),
+            lastPass2,
+            prevEmails2
+          )
         )
-      yield())
+      yield ())
 
       email = randomString
       email2 = randomString
@@ -1040,7 +1075,9 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         id,
         AccountMeta(randomString),
         PrincipalId(randomString),
-        AccountBackwardsIncompatible.UpdateEmails(NonEmptyList.of(email, email2))
+        AccountBackwardsIncompatible.UpdateEmails(
+          NonEmptyList.of(email, email2)
+        )
       )
 
       email3 = randomString
@@ -1049,7 +1086,9 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         id,
         AccountMeta(randomString),
         PrincipalId(randomString),
-        AccountBackwardsIncompatible.UpdateEmails(NonEmptyList.of(email3, email4))
+        AccountBackwardsIncompatible.UpdateEmails(
+          NonEmptyList.of(email3, email4)
+        )
       )
 
       acc2 <- Aggregate[AccountBackwardsIncompatible.Account].get(id)
@@ -1057,25 +1096,26 @@ class AggregatesITest extends AnyFlatSpec with Matchers with BeforeAndAfterAll:
         id,
         NonEmptyList.of(email3, email4),
         lastPass,
-        prevEmails ++ List(lastEmail, email, email2),
+        prevEmails ++ List(lastEmail, email, email2)
       )
       _ <- zassert(acc2 shouldBe res2)
 
       accIds <- AggregateView[Account].withCaughtUp(
-       AggregateView[Account]
-        .store(_.readAggregateViews)
-        .map(
-          _.flatMap(_.keys.toList)
-        )
+        AggregateView[Account]
+          .store(_.readAggregateViews)
+          .map(
+            _.flatMap(_.keys.toList)
+          )
       )
 
-      accIds2 <- AggregateView[AccountBackwardsIncompatible.Account].withCaughtUp(
-       AggregateView[AccountBackwardsIncompatible.Account]
-        .store(_.readAggregateViews)
-        .map(
-          _.flatMap(_.keys.toList)
+      accIds2 <- AggregateView[AccountBackwardsIncompatible.Account]
+        .withCaughtUp(
+          AggregateView[AccountBackwardsIncompatible.Account]
+            .store(_.readAggregateViews)
+            .map(
+              _.flatMap(_.keys.toList)
+            )
         )
-      )
 
       _ <- zassert(accIds shouldBe accIds2)
     yield ())

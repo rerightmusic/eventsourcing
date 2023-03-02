@@ -3,7 +3,6 @@ package eventsourcing.test
 import domain.*
 import infra as I
 import zio.{ZIO, Runtime}
-import scala.util.Random
 import scala.util.Properties
 import doobie.util.transactor.Transactor
 import eventsourcing.all.*
@@ -13,12 +12,7 @@ import shared.postgres.doobie.WithTransactor
 import shared.config.{all as Conf}
 import shared.postgres.PostgresConfig
 import java.io.File
-import shared.principals.PrincipalId
-import cats.data.NonEmptyList
-import java.util.UUID
 import zio.{EnvironmentTag => Tag}
-import cats.syntax.all.*
-import zio.interop.catz.*
 import zio.Fiber
 import org.scalatest.compatible.Assertion
 
@@ -77,7 +71,7 @@ def runSync[R >: AppEnv, E <: Throwable, A](
               fibers <- fiberRef.get
               _ <-
                 if fibers.nonEmpty then
-                  println(s"Fibers ${fibers.length} killed")
+                  ZIO.logInfo(s"Fibers ${fibers.length} killed")
                   Fiber.interruptAll(fibers)
                 else ZIO.unit
             yield ()

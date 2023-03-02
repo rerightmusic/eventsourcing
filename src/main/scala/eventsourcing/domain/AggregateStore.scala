@@ -1,17 +1,12 @@
 package eventsourcing.domain
 
 import types.*
-import zio.UIO
 import cats.data.NonEmptyList
 import zio.Task
 import shared.principals.PrincipalId
 import zio.RIO
 import fs2.*
-import zio.interop.catz.*
 import zio.ZIO
-import shared.newtypes.NewExtractor
-import java.util.UUID
-import scala.concurrent.duration.FiniteDuration
 import doobie.ConnectionIO
 
 trait AggregateStore[Id, Meta, EventData]:

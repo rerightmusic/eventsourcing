@@ -1,15 +1,11 @@
 package eventsourcing.domain
 
-import cats.data.NonEmptyList
 import types.*
-import cats.syntax.all.*
 import zio.ZIO
-import shared.newtypes.NewExtractor
-import shared.principals.PrincipalId
-import java.util.UUID
 import zio.Task
 import zio.ZLayer
 import zio.RIO
+
 trait AggregateViewService[View]:
   type ActualView
   type Query
@@ -64,8 +60,7 @@ object AggregateViewService:
       Query_,
       Aggregates_
     ], Throwable, AggregateViewService[View]](
-      for
-        env <- ZIO.environment[AggregateViewStore[
+      for env <- ZIO.environment[AggregateViewStore[
           ActualView_,
           Query_,
           Aggregates_

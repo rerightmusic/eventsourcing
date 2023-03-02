@@ -1,7 +1,6 @@
 package eventsourcing.infra
 
 import eventsourcing.domain.Aggregate
-import eventsourcing.domain.AggregateView
 import eventsourcing.domain.AggregateStore
 import eventsourcing.domain.AggregateViewStore
 import eventsourcing.domain.types.*
@@ -11,7 +10,6 @@ import cats.data.NonEmptyList
 import cats.syntax.all.*
 import doobie.*
 import doobie.implicits.*
-import doobie.postgres.*
 import doobie.util.Put
 import doobie.util.fragment.Fragment
 import org.tpolecat.typename.TypeName
@@ -24,15 +22,8 @@ import zio.Task
 import zio.ZLayer
 import zio.interop.catz.*
 import shared.uuid.all.*
-import scala.concurrent.duration.DurationInt
 import zio.ZIO
 import shared.postgres.schemaless.PostgresDocument
-import cats.arrow.FunctionK
-import zio.RIO
-import scala.concurrent.duration.FiniteDuration
-import fs2.{Stream, Pipe}
-import fs2.Stream.*
-import org.postgresql.PGNotification
 import zio.Duration
 
 object PostgresAggregateStores:

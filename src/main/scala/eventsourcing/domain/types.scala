@@ -3,7 +3,6 @@ package eventsourcing.domain
 import shared.principals.PrincipalId
 import java.time.OffsetDateTime
 import shared.newtypes.NewtypeWrapped
-import java.util.UUID
 import cats.data.NonEmptyList
 import cats.syntax.all.*
 import eventsourcing.domain.generics.Remove
@@ -22,7 +21,7 @@ object types:
       val message: Option[String] = None
     ) extends AggregateError(
           s"Aggregate is missing ${id} on ${store}${message
-            .fold("")(m => s", ${m}")}"
+              .fold("")(m => s", ${m}")}"
         )
 
     case class InvalidAggregate[Agg, Id, Meta, EventData](

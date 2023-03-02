@@ -2,7 +2,6 @@ package eventsourcing.domain.update
 
 import types.*
 import scala.quoted.*
-import scala.util.control.NonFatal
 import shared.macros.all.*
 import shared.data.automapper.all.*
 

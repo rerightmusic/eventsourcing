@@ -2,28 +2,18 @@ package eventsourcing.infra
 
 import eventsourcing.domain.types as D
 import eventsourcing.domain.AggregateViewStore
-import eventsourcing.domain.AggregateViewService
 import eventsourcing.domain.AggregateView
-import shared.json.all.{*, given}
+import shared.json.all.*
 import cats.data.NonEmptyList
-import doobie.util.update.Update
 import doobie.free.connection.{raiseError, pure}
-import zio.Task
 import doobie.*
 import doobie.implicits.*
 import cats.syntax.all.*
-import zio.interop.catz.*
-import fs2.Chunk
 import zio.ZIO
-import zio.RIO
 import zio.ZLayer
-import shared.data.all.*
 import shared.postgres.all.{*, given}
 import shared.newtypes.NewExtractor
 import java.util.UUID
-import java.time.OffsetDateTime
-import fs2.Stream
-import cats.arrow.FunctionK
 import eventsourcing.domain.AggregateViewClass
 import eventsourcing.domain.generics.Unwrap
 import zio.Duration
@@ -125,9 +115,9 @@ trait PostgresSchemalessAggregateViewStore:
 
           def countAggregateViewM =
             sql"""SELECT count(*) from ${Fragment
-              .const(
-                tableName
-              )} where schema_version = ${aggViewIns.schemaVersion}"""
+                .const(
+                  tableName
+                )} where schema_version = ${aggViewIns.schemaVersion}"""
               .query[Int]
               .unique
 

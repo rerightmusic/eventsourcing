@@ -2,12 +2,11 @@ package eventsourcing.test.json
 
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-import shared.newtypes.*
 import shared.uuid.all.*
 import eventsourcing.all.*
 import cats.data.NonEmptyList
 import shared.json.all.{given, *}
-import eventsourcing.all.{*, given}
+import eventsourcing.all.given
 
 class AggregatesJsonSpec extends AnyFlatSpec with Matchers:
   "Aggregates Json" should "work" in {

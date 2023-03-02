@@ -1,13 +1,10 @@
 package eventsourcing.infra
 
-import postgresOperations.*
 import eventsourcing.domain.types as D
 import eventsourcing.domain.AggregateView
 import shared.json.all.{*, given}
 import cats.data.NonEmptyList
-import doobie.util.update.Update
 import zio.Task
-import zio.IO
 import doobie.*
 import doobie.implicits.*
 import cats.syntax.all.*
@@ -16,12 +13,8 @@ import zio.interop.catz.*
 import fs2.Chunk
 import zio.{ZIO, ZEnvironment}
 import zio.RIO
-import zio.ZLayer
 import shared.data.all.*
-import shared.newtypes.NewExtractor
-import java.util.UUID
 import java.time.OffsetDateTime
-import doobie.util.transactor.Transactor
 import fs2.Stream
 import cats.arrow.FunctionK
 import zio.Schedule

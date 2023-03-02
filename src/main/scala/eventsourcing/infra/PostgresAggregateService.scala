@@ -14,7 +14,6 @@ import shared.postgres.schemaless.PostgresDocument
 import zio.ZLayer
 import cats.data.NonEmptyList
 import zio.Duration
-import zio.Task
 import eventsourcing.domain.AggregateStore
 import shared.postgres.doobie.WithTransactor
 

@@ -1,8 +1,6 @@
 package eventsourcing.update
 
 import org.scalatest.matchers.should.Matchers
-import scala.annotation.targetName
-import scala.quoted.*
 import eventsourcing.all.*
 import java.util.UUID
 import cats.data.NonEmptyList

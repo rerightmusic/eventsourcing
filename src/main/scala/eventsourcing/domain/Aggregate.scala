@@ -2,11 +2,6 @@ package eventsourcing.domain
 
 import cats.data.NonEmptyList
 import types.*
-import cats.syntax.all.*
-import zio.ZIO
-import shared.newtypes.NewExtractor
-import shared.principals.PrincipalId
-import java.util.UUID
 
 trait Aggregate[Agg]:
   type Name <: String
@@ -52,7 +47,7 @@ trait Aggregate[Agg]:
     cmd: Command,
     message: String = "Command rejected"
   ) = Left(
-    new Exception(s"Aggregate: ${aggregate}, Command: ${cmd}, ${message}")
+    new Exception(s"Aggregate: ${agg}, Command: ${cmd}, ${message}")
   )
 
 object Aggregate:

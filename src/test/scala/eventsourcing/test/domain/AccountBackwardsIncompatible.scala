@@ -2,12 +2,7 @@ package eventsourcing.test.domain
 
 import eventsourcing.test.domain as D
 import cats.data.NonEmptyList
-import java.time.OffsetDateTime
 import eventsourcing.all.*
-import shared.newtypes.NewtypeWrapped
-import java.util.UUID
-
-import shared.newtypes.NewExtractor
 
 object AccountBackwardsIncompatible:
   type AccountEvent = AccountCreated | AccountPasswordUpdated |

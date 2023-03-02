@@ -9,7 +9,7 @@ import eventsourcing.domain.{
   AggregateViewService
 }
 import zio.Duration
-import shared.postgres.all.{*, given}
+import shared.postgres.all.*
 
 object PostgresAggregateMigrationViewService:
   def live[

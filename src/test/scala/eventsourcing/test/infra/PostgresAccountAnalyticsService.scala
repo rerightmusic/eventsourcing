@@ -1,12 +1,8 @@
 package eventsourcing.test.infra
 
-import cats.data.NonEmptyList
 import eventsourcing.all.*
 import eventsourcing.test.domain as D
-import shared.data.all.{_, given}
-import shared.json.all.given
-import shared.postgres.all.{_, given}
-import shared.principals.PrincipalId
+import shared.data.all.*
 import zio.{given, *}
 
 object PostgresAccountAnalyticsService:

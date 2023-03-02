@@ -1,10 +1,9 @@
 package eventsourcing.domain
 
-import generics.*
 import cats.data.NonEmptyList
 import types.*
 import cats.syntax.all.*
-import zio.ZIO
+
 trait AggregateView[View]:
   type Query
   type Aggregates <: NonEmptyTuple

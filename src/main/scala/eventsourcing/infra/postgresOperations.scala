@@ -2,39 +2,12 @@ package eventsourcing.infra
 
 import cats.data.NonEmptyList
 import cats.free.Free
-import _root_.doobie.free.connection
 import _root_.doobie.implicits.{toDoobieFoldableOps, toSqlInterpolator}
-import _root_.doobie.util.Put
-import _root_.doobie.util.log.LogHandler
 import _root_.doobie.util.update.Update
-import _root_.doobie.{Fragment, Read, Write}
-import _root_.doobie.postgres.implicits.*
-import shared.principals.PrincipalId
-import java.time.OffsetDateTime
-import doobie.util.transactor.Transactor
-import cats.Monad
-import cats.effect.kernel.MonadCancelThrow
-import cats.effect.IO
-import org.postgresql.PGNotification
-import zio.Task
-import doobie.Transactor
-import zio.Duration
+import _root_.doobie.{Fragment, Write}
 import doobie.*
 import doobie.implicits.*
-import doobie.postgres.*
-import cats.syntax.all.*
-import zio.interop.catz.*
-import shared.postgres.doobie.WithTransactor
 import shared.postgres.schemaless.operations.logHandler
-import fs2.{Stream, Pipe}
-import fs2.Stream.*
-import scala.concurrent.duration.*
-import cats.effect.kernel.Resource
-import zio.interop.catz.implicits.*
-import eventsourcing.domain.types.SequenceId
-import zio.RIO
-import zio.ZIO
-import zio.managed.*
 
 object postgresOperations:
   case class Cols(cols: List[String]):

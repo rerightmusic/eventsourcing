@@ -5,11 +5,8 @@ import eventsourcing.domain.types.*
 import cats.data.NonEmptyList
 import zio.ZIO
 import fs2.Stream
-import zio.Task
-import zio.{IO, URIO, RIO}
+import zio.RIO
 import cats.syntax.all.*
-import zio.interop.catz.*
-import zio.ZEnvironment
 
 trait AggregateViewStores[Aggregates <: NonEmptyTuple]:
   type Stores
